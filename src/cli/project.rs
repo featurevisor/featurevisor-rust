@@ -79,7 +79,7 @@ pub(crate) fn build_datafile(
 }
 
 pub(crate) fn datafile_key(environment: Option<&str>, target: Option<&str>) -> String {
-    // Keep the no-environment key compatible with the other SDK runners.
+    // The "false" key is intentional and keeps no-environment datafiles compatible with other SDK runners.
     match target {
         Some(target) => format!("{}-target-{target}", environment.unwrap_or("false")),
         None => environment.unwrap_or("false").to_string(),

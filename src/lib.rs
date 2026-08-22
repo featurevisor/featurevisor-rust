@@ -36,7 +36,6 @@ mod bucketer;
 mod child;
 mod compare_versions;
 mod conditions;
-mod datafile;
 mod diagnostics;
 mod emitter;
 mod evaluate;

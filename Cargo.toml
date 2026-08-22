@@ -12,7 +12,7 @@ repository = "https://github.com/featurevisor/featurevisor-rust"
 authors = ["Fahad Heylaal"]
 keywords = ["feature-flags", "featurevisor", "experimentation", "ab-testing", "remote-config"]
 categories = ["config", "development-tools"]
-exclude = ["/.github", "/Makefile", "/monorepo", "/example-1"]
+exclude = ["/.github", "/Makefile", "/monorepo", "/example-1", "/featurevisor"]
 
 [features]
 default = []
