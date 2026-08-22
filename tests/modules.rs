@@ -8,6 +8,18 @@ use std::sync::{Arc, Mutex};
 struct TestModule {
     events: Arc<Mutex<Vec<String>>>,
 }
+
+struct FailingCloseModule;
+
+impl FeaturevisorModule for FailingCloseModule {
+    fn name(&self) -> Option<&str> {
+        Some("failing-close")
+    }
+
+    fn close(&self) {
+        panic!("close failed");
+    }
+}
 impl FeaturevisorModule for TestModule {
     fn name(&self) -> Option<&str> {
         Some("test")
@@ -82,4 +94,27 @@ fn diagnostics_and_error_events_are_available() {
         .unwrap()
         .iter()
         .any(|diagnostic| diagnostic.code == "invalid_datafile"));
+}
+
+#[test]
+fn module_close_failures_include_module_metadata() {
+    let diagnostics = Arc::new(Mutex::new(Vec::<Diagnostic>::new()));
+    let observed = Arc::clone(&diagnostics);
+    let f = create_featurevisor(FeaturevisorOptions {
+        on_diagnostic: Some(Arc::new(move |diagnostic| {
+            observed.lock().unwrap().push(diagnostic.clone())
+        })),
+        modules: vec![Arc::new(FailingCloseModule)],
+        ..Default::default()
+    });
+
+    f.close();
+
+    let diagnostics = diagnostics.lock().unwrap();
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "module_close_error")
+        .expect("module close diagnostic");
+    assert_eq!(diagnostic.module_name.as_deref(), Some("failing-close"));
+    assert!(diagnostic.original_error.is_some());
 }

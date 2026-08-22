@@ -1,6 +1,7 @@
 use crate::bucketer::{get_bucket_key, get_bucketed_number};
 use crate::conditions::{all_conditions_are_matched, all_segments_are_matched, RegexGetter};
 use crate::diagnostics::{Diagnostic, LogLevel};
+use crate::helpers::panic_message;
 use crate::modules::{ConfigureBucketKeyOptions, ConfigureBucketValueOptions, FeaturevisorModule};
 use crate::types::{
     Allocation, Context, DatafileContent, EvaluatedFeature, Feature, Force, Required,
@@ -9,7 +10,8 @@ use crate::types::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::OnceLock;
+use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -99,13 +101,13 @@ pub struct EvaluateOptions {
 #[derive(Clone)]
 pub(crate) struct EvaluationData {
     pub datafile: Arc<DatafileContent>,
-    pub regex_cache: Arc<Mutex<HashMap<String, regex::Regex>>>,
+    pub regex_cache: Arc<RwLock<HashMap<String, regex::Regex>>>,
 }
 
 impl EvaluationData {
     fn regex(&self, pattern: &str, flags: &str) -> Result<regex::Regex, String> {
         let key = format!("{pattern}\u{0}{flags}");
-        if let Ok(cache) = self.regex_cache.lock() {
+        if let Ok(cache) = self.regex_cache.read() {
             if let Some(regex) = cache.get(&key) {
                 return Ok(regex.clone());
             }
@@ -128,7 +130,8 @@ impl EvaluationData {
             format!("(?{prefix}){pattern}")
         };
         let regex = regex::Regex::new(&source).map_err(|error| error.to_string())?;
-        if let Ok(mut cache) = self.regex_cache.lock() {
+        validate_portable_regex(pattern)?;
+        if let Ok(mut cache) = self.regex_cache.write() {
             cache.insert(key, regex.clone());
         }
         Ok(regex)
@@ -209,6 +212,37 @@ impl EvaluationData {
     }
 }
 
+fn validate_portable_regex(pattern: &str) -> Result<(), String> {
+    if pattern.contains("(?") {
+        return Err(
+            "regular expression must not use lookaround, named groups, noncapturing groups, atomic groups, or inline mode groups".to_string(),
+        );
+    }
+
+    static BACKREFERENCE_REGEX: OnceLock<regex::Regex> = OnceLock::new();
+    if BACKREFERENCE_REGEX
+        .get_or_init(|| {
+            regex::Regex::new(r"\\(?:[1-9]|k<|k'|g<|g')").expect("valid backreference regex")
+        })
+        .is_match(pattern)
+    {
+        return Err("regular expression must not use backreferences".to_string());
+    }
+
+    static POSSESSIVE_QUANTIFIER_REGEX: OnceLock<regex::Regex> = OnceLock::new();
+    if POSSESSIVE_QUANTIFIER_REGEX
+        .get_or_init(|| {
+            regex::Regex::new(r"(?:[?*+]|\{\d+(?:,\d*)?\})\+")
+                .expect("valid possessive quantifier regex")
+        })
+        .is_match(pattern)
+    {
+        return Err("regular expression must not use possessive quantifiers".to_string());
+    }
+
+    Ok(())
+}
+
 fn diag_for(evaluation: &Evaluation, level: LogLevel, code: &str, message: &str) -> Diagnostic {
     let mut diagnostic = Diagnostic::new(level, code, message);
     diagnostic.details.insert(
@@ -224,6 +258,9 @@ fn diag_for(evaluation: &Evaluation, level: LogLevel, code: &str, message: &str)
             "variableKey".to_string(),
             JsonValue::String(variable_key.clone()),
         );
+    }
+    if let Some(error) = &evaluation.error {
+        diagnostic.original_error = Some(error.clone());
     }
     diagnostic.details.insert(
         "evaluation".to_string(),
@@ -498,6 +535,8 @@ fn evaluate(options: &EvaluateOptions) -> Evaluation {
                     VariableValue::Null,
                     None,
                 );
+                let mut evaluation = evaluation;
+                evaluation.variable_value = None;
                 apply_diagnostic(
                     report,
                     &evaluation,
@@ -995,17 +1034,21 @@ fn evaluate(options: &EvaluateOptions) -> Evaluation {
         );
         evaluation
     }));
-    run.unwrap_or_else(|_| {
-        let evaluation = basic(type_, key.clone(), EvaluationReason::Error);
-        apply_diagnostic(
-            report,
-            &evaluation,
-            LogLevel::Error,
-            "evaluation_error",
-            "Error during evaluation",
-        );
-        evaluation
-    })
+    match run {
+        Ok(evaluation) => evaluation,
+        Err(error) => {
+            let mut evaluation = basic(type_, key.clone(), EvaluationReason::Error);
+            evaluation.error = Some(panic_message(error.as_ref()));
+            apply_diagnostic(
+                report,
+                &evaluation,
+                LogLevel::Error,
+                "evaluation_error",
+                "Error during evaluation",
+            );
+            evaluation
+        }
+    }
 }
 
 fn basic(

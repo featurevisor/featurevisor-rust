@@ -1,5 +1,6 @@
 use crate::{DatafileContent, DatafileInput};
 use serde_json::Value as JsonValue;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -34,16 +35,26 @@ pub(crate) fn project_path(value: &str) -> PathBuf {
 
 pub(crate) fn list_targets(project: &Path) -> Result<Vec<String>, String> {
     let value = json_command(project, "list", vec!["--targets".to_string()])?;
-    Ok(value
-        .as_array()
+    Ok(unique_targets(
+        value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                item.get("key")
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_string)
+            })
+            .collect(),
+    ))
+}
+
+pub(crate) fn unique_targets(targets: Vec<String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    targets
         .into_iter()
-        .flatten()
-        .filter_map(|item| {
-            item.get("key")
-                .and_then(JsonValue::as_str)
-                .map(str::to_string)
-        })
-        .collect())
+        .filter(|target| seen.insert(target.clone()))
+        .collect()
 }
 
 pub(crate) fn build_datafile(
@@ -80,7 +91,7 @@ pub(crate) fn input(datafile: DatafileContent) -> DatafileInput {
 
 #[cfg(test)]
 mod tests {
-    use super::datafile_key;
+    use super::{datafile_key, unique_targets};
 
     #[test]
     fn datafile_keys_match_the_javascript_runner_shape() {
@@ -93,6 +104,18 @@ mod tests {
         assert_eq!(
             datafile_key(Some("production"), Some("checkout")),
             "production-target-checkout"
+        );
+    }
+
+    #[test]
+    fn target_values_are_deduplicated_without_reordering() {
+        assert_eq!(
+            unique_targets(vec![
+                "web".to_string(),
+                "mobile".to_string(),
+                "web".to_string(),
+            ]),
+            vec!["web".to_string(), "mobile".to_string()]
         );
     }
 }

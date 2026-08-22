@@ -1,6 +1,7 @@
 use crate::types::{AttributeValue, Context};
 #[cfg(feature = "cli")]
 use serde_json::Value as JsonValue;
+use std::any::Any;
 
 pub fn format_js_number(value: f64) -> String {
     if value == 0.0 {
@@ -109,6 +110,16 @@ pub fn context_value<'a>(context: &'a Context, path: &str) -> Option<&'a Attribu
         };
     }
     Some(current)
+}
+
+pub(crate) fn panic_message(error: &(dyn Any + Send)) -> String {
+    if let Some(message) = error.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = error.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "module callback panicked".to_string()
 }
 
 #[cfg(feature = "cli")]

@@ -6,13 +6,21 @@ use chrono::{DateTime, FixedOffset};
 use regex::Regex;
 use serde_json::Value as JsonValue;
 use std::cmp::Ordering;
+use std::sync::OnceLock;
 
 pub(crate) type RegexGetter<'a> = dyn Fn(&str, &str) -> Result<Regex, String> + 'a;
 
+static ISO_DATE_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn iso_date_regex() -> &'static Regex {
+    ISO_DATE_REGEX.get_or_init(|| {
+        Regex::new(r"T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2})$")
+            .expect("valid ISO date regex")
+    })
+}
+
 fn parse_date(value: &str) -> Option<DateTime<FixedOffset>> {
-    let explicit_timezone =
-        regex::Regex::new(r"T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+\-]\d{2}:\d{2})$").ok()?;
-    if !explicit_timezone.is_match(value) {
+    if !iso_date_regex().is_match(value) {
         return None;
     }
     DateTime::parse_from_rfc3339(value).ok()

@@ -31,3 +31,17 @@ fn legacy_flags_are_accepted_and_targets_are_repeatable() {
         _ => panic!("expected test command"),
     }
 }
+
+#[test]
+fn benchmark_rejects_variation_and_variable_together() {
+    let result = Cli::try_parse_from([
+        "featurevisor",
+        "benchmark",
+        "--feature",
+        "checkout",
+        "--variation",
+        "--variable",
+        "title",
+    ]);
+    assert!(result.is_err());
+}

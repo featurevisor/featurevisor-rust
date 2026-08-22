@@ -413,11 +413,19 @@ cargo install featurevisor --features cli
 featurevisor test --projectDirectoryPath=../featurevisor/examples/example-1 --onlyFailures
 ```
 
+`--keyPattern` filters test keys with a case insensitive regular expression.
+`--assertionPattern` does the same for assertion descriptions. A successful run
+prints totals for test specs and assertions. If filters select no specs, the
+command fails instead of reporting a silent success.
+
 ### Benchmark
 
 ```bash
 featurevisor benchmark --projectDirectoryPath=../featurevisor/examples/example-1 --feature=foo --n=1000000
 ```
+
+Use either `--variation` or `--variable=<key>` when benchmarking. They cannot be
+used together.
 
 ### Assess distribution
 

@@ -1,12 +1,13 @@
 use super::options::TestOptions;
 use super::project::{
-    build_datafile, datafile_key, input, json_command, list_targets, project_path,
+    build_datafile, datafile_key, input, json_command, list_targets, project_path, unique_targets,
 };
 use crate::modules::ConfigureBucketValueOptions;
 use crate::{
     Featurevisor, FeaturevisorChild, FeaturevisorModule, FeaturevisorOptions, LogLevel,
     OverrideOptions, Segment, SpawnOptions,
 };
+use regex::{Regex, RegexBuilder};
 use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
 use std::path::Path;
@@ -42,6 +43,17 @@ fn log_level(options: &TestOptions) -> LogLevel {
     } else {
         LogLevel::Warn
     }
+}
+
+fn compile_pattern(option: &str, pattern: Option<&str>) -> Result<Option<Regex>, String> {
+    pattern
+        .map(|pattern| {
+            RegexBuilder::new(pattern)
+                .case_insensitive(true)
+                .build()
+                .map_err(|error| format!("Invalid {option}: {error}"))
+        })
+        .transpose()
 }
 
 fn json_equal(
@@ -303,16 +315,18 @@ fn compare_children(
             .get("expectedToBeEnabled")
             .and_then(JsonValue::as_bool)
         {
-            if child_sdk.is_enabled(feature_key, None) != expected {
+            let actual = child_sdk.is_enabled(feature_key, None);
+            if actual != expected {
                 errors.push(format!(
-                    "{feature_key}: child {index} expected enabled {expected}"
+                    "{feature_key}: child {index} expected enabled {expected}, got {actual}"
                 ));
             }
         }
         if let Some(expected) = child.get("expectedVariation").and_then(JsonValue::as_str) {
-            if child_sdk.get_variation(feature_key, None, None).as_deref() != Some(expected) {
+            let actual = child_sdk.get_variation(feature_key, None, None);
+            if actual.as_deref() != Some(expected) {
                 errors.push(format!(
-                    "{feature_key}: child {index} expected variation {expected}"
+                    "{feature_key}: child {index} expected variation {expected}, got {actual:?}"
                 ));
             }
         }
@@ -415,8 +429,11 @@ fn run_assertion(
         .get("expectedToBeEnabled")
         .and_then(JsonValue::as_bool)
     {
-        if f.is_enabled(feature_key, None) != expected {
-            errors.push(format!("{feature_key}: expected enabled {expected}"));
+        let actual = f.is_enabled(feature_key, None);
+        if actual != expected {
+            errors.push(format!(
+                "{feature_key}: expected enabled {expected}, got {actual}"
+            ));
         }
     }
     if let Some(expected) = assertion
@@ -430,11 +447,12 @@ fn run_assertion(
                 .map(str::to_string),
             default_variable_value: None,
         };
-        if f.get_variation(feature_key, None, Some(&options))
-            .as_deref()
-            != Some(expected)
-        {
-            errors.push(format!("{feature_key}: expected variation {expected}"));
+        let actual = f.get_variation(feature_key, None, Some(&options));
+        if actual.as_deref() != Some(expected) {
+            errors.push(format!(
+                "{feature_key}: expected variation {expected}, got {:?}",
+                actual
+            ));
         }
     }
     compare_variables(&mut errors, feature_key, assertion, &f);
@@ -513,16 +531,20 @@ fn base_datafile<'a>(
 
 pub fn run(options: TestOptions) -> Result<(), String> {
     let project = project_path(&options.common.project_directory_path);
+    let key_pattern = compile_pattern("--keyPattern", options.key_pattern.as_deref())?;
+    let assertion_pattern =
+        compile_pattern("--assertionPattern", options.assertion_pattern.as_deref())?;
     let target_keys = if options.common.target.is_empty() {
         list_targets(&project)?
     } else {
         let available = list_targets(&project)?;
-        for target in &options.common.target {
+        let selected = unique_targets(options.common.target.clone());
+        for target in &selected {
             if !available.contains(target) {
                 return Err(format!("Unknown target \"{target}\""));
             }
         }
-        options.common.target.clone()
+        selected
     };
     let value = json_command(
         &project,
@@ -540,29 +562,40 @@ pub fn run(options: TestOptions) -> Result<(), String> {
         &target_keys,
         options.common.inflate,
     )?;
-    let mut failures = 0usize;
+    let mut passed_specs = 0usize;
+    let mut failed_specs = 0usize;
+    let mut passed_assertions = 0usize;
+    let mut failed_assertions = 0usize;
 
     for test in tests {
         let key = test
             .get("key")
             .and_then(JsonValue::as_str)
             .unwrap_or("unknown");
-        if options
-            .key_pattern
+        if key_pattern
             .as_ref()
-            .is_some_and(|pattern| !key.contains(pattern))
+            .is_some_and(|pattern| !pattern.is_match(key))
         {
             continue;
         }
         let mut test_failed = false;
+        let mut assertions_run = 0usize;
         if let Some(assertions) = test.get("assertions").and_then(JsonValue::as_array) {
             for assertion in assertions {
-                if options.assertion_pattern.as_ref().is_some_and(|pattern| {
-                    !assertion
-                        .get("description")
-                        .and_then(JsonValue::as_str)
-                        .unwrap_or("")
-                        .contains(pattern)
+                if assertion
+                    .get("target")
+                    .and_then(JsonValue::as_str)
+                    .is_some_and(|target| !target_keys.iter().any(|key| key == target))
+                {
+                    continue;
+                }
+                if assertion_pattern.as_ref().is_some_and(|pattern| {
+                    !pattern.is_match(
+                        assertion
+                            .get("description")
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or(""),
+                    )
                 }) {
                     continue;
                 }
@@ -574,27 +607,64 @@ pub fn run(options: TestOptions) -> Result<(), String> {
                     &datafiles,
                     &segments,
                 )?;
+                assertions_run += 1;
                 if !errors.is_empty() {
                     test_failed = true;
+                    failed_assertions += 1;
                     if !options.common.quiet {
+                        let description = assertion
+                            .get("description")
+                            .and_then(JsonValue::as_str)
+                            .unwrap_or("assertion");
                         for error in errors {
-                            eprintln!("  {error}");
+                            eprintln!("  {key} ({description}): {error}");
                         }
                     }
+                } else {
+                    passed_assertions += 1;
                 }
             }
         }
+        if assertions_run == 0 {
+            continue;
+        }
         if test_failed {
-            failures += 1;
+            failed_specs += 1;
             if !options.only_failures && !options.common.quiet {
                 println!("FAIL {key}");
             }
         } else if !options.only_failures && !options.common.quiet {
             println!("PASS {key}");
+            passed_specs += 1;
+        } else {
+            passed_specs += 1;
         }
     }
-    if failures > 0 {
-        return Err(format!("{failures} test specs failed"));
+    println!("\n---");
+    println!("Test specs: {passed_specs} passed, {failed_specs} failed");
+    println!("Assertions: {passed_assertions} passed, {failed_assertions} failed");
+    if passed_specs + failed_specs == 0 {
+        return Err("No test specs matched the requested filters".to_string());
+    }
+    if failed_specs > 0 {
+        return Err(format!("{failed_specs} test specs failed"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compile_pattern;
+
+    #[test]
+    fn test_filters_are_case_insensitive_regular_expressions() {
+        let pattern = compile_pattern("--keyPattern", Some(r"^features\.pricing$")).unwrap();
+        assert!(pattern.unwrap().is_match("FEATURES.PRICING"));
+    }
+
+    #[test]
+    fn invalid_test_filter_is_reported_before_running_the_command() {
+        let error = compile_pattern("--keyPattern", Some("[")).unwrap_err();
+        assert!(error.starts_with("Invalid --keyPattern:"));
+    }
 }

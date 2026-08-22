@@ -56,9 +56,9 @@ pub struct BenchmarkOptions {
     pub common: CommonOptions,
     #[arg(long)]
     pub feature: String,
-    #[arg(long, action = clap::ArgAction::SetTrue)]
+    #[arg(long, action = clap::ArgAction::SetTrue, conflicts_with = "variable")]
     pub variation: bool,
-    #[arg(long)]
+    #[arg(long, conflicts_with = "variation")]
     pub variable: Option<String>,
     #[arg(long, default_value = "{}")]
     pub context: String,

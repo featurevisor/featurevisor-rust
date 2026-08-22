@@ -85,3 +85,42 @@ fn malformed_datafile_preserves_existing_state() {
                 && message == "Could not parse datafile")
     );
 }
+
+#[test]
+fn variable_defaults_preserve_empty_false_zero_and_null_values() {
+    let datafile = serde_json::from_value(json!({
+        "schemaVersion": "2",
+        "revision": "defaults",
+        "segments": {},
+        "features": {
+            "feature": {
+                "bucketBy": "userId",
+                "variablesSchema": {},
+                "traffic": []
+            }
+        }
+    }))
+    .unwrap();
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(datafile)),
+        ..Default::default()
+    });
+
+    for value in [
+        featurevisor::VariableValue::String(String::new()),
+        featurevisor::VariableValue::Integer(0),
+        featurevisor::VariableValue::Boolean(false),
+        featurevisor::VariableValue::Null,
+    ] {
+        let actual = f.get_variable(
+            "feature",
+            "missing",
+            None,
+            Some(&OverrideOptions {
+                default_variable_value: Some(value.clone()),
+                ..Default::default()
+            }),
+        );
+        assert_eq!(actual, Some(value));
+    }
+}

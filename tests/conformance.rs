@@ -1,7 +1,46 @@
 use featurevisor::{
-    create_featurevisor, AttributeValue, Context, DatafileInput, FeaturevisorOptions,
+    create_featurevisor, AttributeValue, ConfigureBucketValueOptions, Context, DatafileInput,
+    Diagnostic, EventDetails, EventName, FeaturevisorModule, FeaturevisorOptions, LogLevel,
+    ModuleApi,
 };
 use serde_json::{json, Value};
+use std::sync::{Arc, Mutex};
+
+struct FixedBucket(u32);
+
+impl FeaturevisorModule for FixedBucket {
+    fn bucket_value(&self, _options: ConfigureBucketValueOptions) -> u32 {
+        self.0
+    }
+}
+
+struct ReportingModule;
+
+impl FeaturevisorModule for ReportingModule {
+    fn name(&self) -> Option<&str> {
+        Some("conformance")
+    }
+
+    fn setup(&self, api: &ModuleApi) {
+        api.report_diagnostic(Diagnostic::new(
+            LogLevel::Info,
+            "module_ready",
+            "Module ready",
+        ));
+    }
+}
+
+struct PanickingModule;
+
+impl FeaturevisorModule for PanickingModule {
+    fn name(&self) -> Option<&str> {
+        Some("broken")
+    }
+
+    fn setup(&self, _api: &ModuleApi) {
+        panic!("setup failed");
+    }
+}
 
 fn datafile(segments: Value, features: Value) -> featurevisor::DatafileContent {
     serde_json::from_value(json!({
@@ -18,6 +57,10 @@ fn feature(segments: Value, conditions: Value) -> featurevisor::DatafileContent 
         json!({ "segment": { "conditions": conditions } }),
         json!({ "feature": { "bucketBy": "userId", "traffic": [{ "key": "rule", "segments": segments, "percentage": 100000, "enabled": true }] } }),
     )
+}
+
+fn condition_feature(condition: Value) -> featurevisor::DatafileContent {
+    feature(json!("segment"), condition)
 }
 
 #[test]
@@ -69,6 +112,72 @@ fn fixture_bucketing_numbers_regex_and_typed_values_are_executed() {
     let fixture: Value = serde_json::from_str(include_str!("../conformance/sdk-v3.json")).unwrap();
     assert_eq!(fixture["bucketing"]["minimum"], 0);
     assert_eq!(fixture["bucketing"]["maximum"], 100000);
+    for (bucket_value, expected) in fixture["bucketing"]["percentage"]["enabledAt"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip([true, true])
+    {
+        let f = create_featurevisor(FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(datafile(
+                json!({}),
+                json!({
+                    "feature": {
+                        "bucketBy": "userId",
+                        "traffic": [{ "key": "rule", "segments": "*", "percentage": 50000 }]
+                    }
+                }),
+            ))),
+            modules: vec![Arc::new(FixedBucket(bucket_value.as_u64().unwrap() as u32))],
+            ..Default::default()
+        });
+        assert_eq!(f.is_enabled("feature", None), expected);
+    }
+    for bucket_value in fixture["bucketing"]["percentage"]["disabledAt"]
+        .as_array()
+        .unwrap()
+    {
+        let f = create_featurevisor(FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(datafile(
+                json!({}),
+                json!({
+                    "feature": {
+                        "bucketBy": "userId",
+                        "traffic": [{ "key": "rule", "segments": "*", "percentage": 50000 }]
+                    }
+                }),
+            ))),
+            modules: vec![Arc::new(FixedBucket(bucket_value.as_u64().unwrap() as u32))],
+            ..Default::default()
+        });
+        assert!(!f.is_enabled("feature", None));
+    }
+    for (bucket_value, expected) in fixture["bucketing"]["allocationExpectations"]
+        .as_object()
+        .unwrap()
+    {
+        let f = create_featurevisor(FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(datafile(
+                json!({}),
+                json!({
+                    "feature": {
+                        "bucketBy": "userId",
+                        "variations": [{ "value": "control" }, { "value": "treatment" }],
+                        "traffic": [{ "key": "rule", "segments": "*", "percentage": 100000, "allocation": [
+                            { "variation": "control", "range": [0, 50000] },
+                            { "variation": "treatment", "range": [50000, 100000] }
+                        ] }]
+                    }
+                }),
+            ))),
+            modules: vec![Arc::new(FixedBucket(bucket_value.parse::<u32>().unwrap()))],
+            ..Default::default()
+        });
+        assert_eq!(
+            f.get_variation("feature", None, None).as_deref(),
+            Some(expected.as_str().unwrap())
+        );
+    }
     for item in fixture["numericBucketKeys"].as_array().unwrap() {
         let value = item["value"].as_f64().unwrap();
         let datafile = datafile(
@@ -115,6 +224,88 @@ fn fixture_bucketing_numbers_regex_and_typed_values_are_executed() {
             item["pattern"]
         );
     }
+    let repeated_condition = json!({
+        "attribute": "value",
+        "operator": "matches",
+        "value": fixture["regularExpressions"]["pattern"],
+        "regexFlags": fixture["regularExpressions"]["flags"]
+    });
+    for (value, expected) in fixture["regularExpressions"]["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(fixture["regularExpressions"]["matches"].as_array().unwrap())
+    {
+        let f = create_featurevisor(FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(feature(
+                json!("segment"),
+                repeated_condition.clone(),
+            ))),
+            ..Default::default()
+        });
+        let context = [(
+            "value".to_string(),
+            AttributeValue::from(value.as_str().unwrap()),
+        )]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            f.is_enabled("feature", Some(&context)),
+            expected.as_bool().unwrap()
+        );
+    }
+    for pattern in fixture["regularExpressions"]["rejectedSyntax"]
+        .as_array()
+        .unwrap()
+    {
+        let f = create_featurevisor(FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(feature(
+                json!("segment"),
+                json!({
+                    "attribute": "value",
+                    "operator": "matches",
+                    "value": pattern,
+                    "regexFlags": ""
+                }),
+            ))),
+            ..Default::default()
+        });
+        let context = [("value".to_string(), AttributeValue::from("foo"))]
+            .into_iter()
+            .collect();
+        assert!(
+            !f.is_enabled("feature", Some(&context)),
+            "pattern {pattern}"
+        );
+    }
+    for flag in fixture["portableConditions"]["rejectedRegexFlags"]
+        .as_array()
+        .unwrap()
+    {
+        let diagnostics = Arc::new(Mutex::new(Vec::new()));
+        let observed = Arc::clone(&diagnostics);
+        let f = create_featurevisor(FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(condition_feature(json!({
+                "attribute": "value",
+                "operator": "matches",
+                "value": "chrome",
+                "regexFlags": flag
+            })))),
+            on_diagnostic: Some(Arc::new(move |diagnostic| {
+                observed.lock().unwrap().push(diagnostic.clone())
+            })),
+            ..Default::default()
+        });
+        let context = [("value".to_string(), AttributeValue::from("chrome"))]
+            .into_iter()
+            .collect();
+        assert!(!f.is_enabled("feature", Some(&context)), "flag {flag}");
+        assert!(diagnostics
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|diagnostic| diagnostic.code == "condition_match_error"));
+    }
     for item in fixture["typedVariables"].as_array().unwrap() {
         let schema_type = item["type"].as_str().unwrap();
         let datafile = datafile(
@@ -148,6 +339,135 @@ fn fixture_bucketing_numbers_regex_and_typed_values_are_executed() {
 }
 
 #[test]
+fn fixture_portable_conditions_dates_semver_and_invalid_inputs_are_executed() {
+    let fixture: Value = serde_json::from_str(include_str!("../conformance/sdk-v3.json")).unwrap();
+    let dates = &fixture["portableConditions"]["dates"];
+    let before = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(feature(
+            json!("segment"),
+            json!({
+                "attribute": "date",
+                "operator": "before",
+                "value": dates[2]
+            }),
+        ))),
+        ..Default::default()
+    });
+    let context = [(
+        "date".to_string(),
+        AttributeValue::from(dates[0].as_str().unwrap()),
+    )]
+    .into_iter()
+    .collect();
+    assert!(before.is_enabled("feature", Some(&context)));
+
+    for (context_version, operator, expected_version, expected) in [
+        ("1.2.3", "semverEquals", "1.2.3+build.5", true),
+        ("1.2.3-beta.1", "semverLessThan", "1.2.3", true),
+        ("1.2.3+build.5", "semverEquals", "1.2.3", true),
+    ] {
+        let f = create_featurevisor(FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(feature(
+                json!("segment"),
+                json!({
+                    "attribute": "version",
+                    "operator": operator,
+                    "value": expected_version
+                }),
+            ))),
+            ..Default::default()
+        });
+        let context = [("version".to_string(), AttributeValue::from(context_version))]
+            .into_iter()
+            .collect();
+        assert_eq!(f.is_enabled("feature", Some(&context)), expected);
+    }
+
+    let diagnostics = Arc::new(Mutex::new(Vec::new()));
+    let observed = Arc::clone(&diagnostics);
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(feature(
+            json!("segment"),
+            json!({
+                "attribute": "version",
+                "operator": "semverEquals",
+                "value": fixture["portableConditions"]["semanticVersions"][0]
+            }),
+        ))),
+        on_diagnostic: Some(Arc::new(move |diagnostic| {
+            observed.lock().unwrap().push(diagnostic.clone())
+        })),
+        ..Default::default()
+    });
+    let context = [("version".to_string(), AttributeValue::from("invalid"))]
+        .into_iter()
+        .collect();
+    assert!(!f.is_enabled("feature", Some(&context)));
+    assert!(diagnostics.lock().unwrap().iter().any(|diagnostic| {
+        diagnostic.code
+            == fixture["portableConditions"]["invalidSemanticVersionDiagnosticCode"]
+                .as_str()
+                .unwrap()
+    }));
+}
+
+#[test]
+fn fixture_child_context_case_is_executed() {
+    let fixture: Value = serde_json::from_str(include_str!("../conformance/sdk-v3.json")).unwrap();
+    let datafile = datafile(
+        json!({}),
+        json!({
+            "country": { "bucketBy": "userId", "traffic": [{ "key": "rule", "segments": "*", "conditions": { "attribute": "country", "operator": "equals", "value": "de" }, "percentage": 100000, "enabled": true }] },
+            "plan": { "bucketBy": "userId", "traffic": [{ "key": "rule", "segments": "*", "conditions": { "attribute": "plan", "operator": "equals", "value": "free" }, "percentage": 100000, "enabled": true }] },
+            "region": { "bucketBy": "userId", "traffic": [{ "key": "rule", "segments": "*", "conditions": { "attribute": "region", "operator": "equals", "value": "eu" }, "percentage": 100000, "enabled": true }] },
+            "experiment": { "bucketBy": "userId", "variations": [{ "value": "control" }], "traffic": [{ "key": "rule", "segments": "*", "percentage": 100000, "allocation": [{ "variation": "control", "range": [0, 100000] }] }] },
+            "config": { "bucketBy": "userId", "variablesSchema": { "value": { "type": "string", "defaultValue": "default" } }, "traffic": [{ "key": "rule", "segments": "*", "percentage": 100000, "variables": { "value": "child" } }] }
+        }),
+    );
+    let parent_context: Context = fixture["childInstances"]["contextCase"]["parentAtSpawn"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(key, value)| (key.clone(), AttributeValue::from_json(value.clone())))
+        .collect();
+    let child_context: Context = fixture["childInstances"]["contextCase"]["child"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(key, value)| (key.clone(), AttributeValue::from_json(value.clone())))
+        .collect();
+    let parent_after_spawn: Context = fixture["childInstances"]["contextCase"]["parentAfterSpawn"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(key, value)| (key.clone(), AttributeValue::from_json(value.clone())))
+        .collect();
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(datafile)),
+        context: Some(parent_context),
+        ..Default::default()
+    });
+    let child = f.spawn(child_context, Default::default());
+    f.set_context(parent_after_spawn, false);
+    let expected = &fixture["childInstances"]["contextCase"]["expected"];
+    assert_eq!(
+        child.is_enabled("country", None),
+        expected["country"] == "de"
+    );
+    assert_eq!(child.is_enabled("plan", None), expected["plan"] == "free");
+    assert_eq!(child.is_enabled("region", None), expected["region"] == "eu");
+    assert_eq!(child.evaluate_flag("country", None).enabled, Some(true));
+    assert_eq!(
+        child.get_variation("experiment", None, None).as_deref(),
+        Some("control")
+    );
+    assert_eq!(
+        child.get_variable_string("config", "value", None, None),
+        Some("child".to_string())
+    );
+}
+
+#[test]
 fn fixture_datafile_defaults_diagnostics_and_native_contexts_are_executed() {
     let fixture: Value = serde_json::from_str(include_str!("../conformance/sdk-v3.json")).unwrap();
     let informational = datafile(json!({}), json!({}));
@@ -162,7 +482,7 @@ fn fixture_datafile_defaults_diagnostics_and_native_contexts_are_executed() {
     let default_datafile: featurevisor::DatafileContent =
         serde_json::from_value(defaults["datafile"].clone()).unwrap();
     let f = create_featurevisor(FeaturevisorOptions {
-        datafile: Some(DatafileInput::Content(default_datafile)),
+        datafile: Some(DatafileInput::Content(default_datafile.clone())),
         ..Default::default()
     });
     let options = featurevisor::OverrideOptions {
@@ -178,32 +498,149 @@ fn fixture_datafile_defaults_diagnostics_and_native_contexts_are_executed() {
         f.get_variation("experiment", None, Some(&options)),
         Some(String::new())
     );
+    for value in [
+        featurevisor::VariableValue::String(String::new()),
+        featurevisor::VariableValue::Integer(0),
+        featurevisor::VariableValue::Boolean(false),
+        featurevisor::VariableValue::Null,
+    ] {
+        assert_eq!(
+            f.get_variable(
+                "experiment",
+                "missing",
+                None,
+                Some(&featurevisor::OverrideOptions {
+                    default_variable_value: Some(value.clone()),
+                    ..Default::default()
+                })
+            ),
+            Some(value)
+        );
+    }
+
     let diagnostics = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let observed = std::sync::Arc::clone(&diagnostics);
     let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(default_datafile.clone())),
+        modules: vec![std::sync::Arc::new(ReportingModule)],
         on_diagnostic: Some(std::sync::Arc::new(move |diagnostic| {
             observed.lock().unwrap().push(diagnostic.clone())
         })),
         ..Default::default()
     });
+    let errors = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed_errors = std::sync::Arc::clone(&errors);
+    let _unsubscribe = f.on(
+        EventName::Error,
+        std::sync::Arc::new(move |details| {
+            if let EventDetails::Error { diagnostic } = details {
+                observed_errors.lock().unwrap().push(diagnostic.clone());
+            }
+        }),
+    );
     assert!(!f.is_enabled(
         fixture["diagnosticCase"]["featureKey"].as_str().unwrap(),
         None
     ));
+    let _ = f.get_variable("experiment", "missing", None, None);
+    f.set_datafile(DatafileInput::Json("not-json".to_string()), false);
     let diagnostics = diagnostics.lock().unwrap();
-    assert!(diagnostics.iter().any(
-        |diagnostic| diagnostic.level == featurevisor::LogLevel::Warn
-            && diagnostic.code == "feature_not_found"
-            && !diagnostic.details.is_empty()
-    ));
-    assert!(
-        fixture["nativeContexts"]["numericTypesUseOneComparisonContract"]
-            .as_bool()
-            .unwrap()
-    );
-    assert!(
-        fixture["nativeContexts"]["primitiveNativeSlicesSupportIncludes"]
-            .as_bool()
-            .unwrap()
-    );
+    let feature_not_found = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "feature_not_found")
+        .expect("feature_not_found diagnostic");
+    assert_eq!(feature_not_found.level, featurevisor::LogLevel::Warn);
+    let serialized = serde_json::to_value(feature_not_found).unwrap();
+    for field in fixture["diagnostics"]["requiredFields"].as_array().unwrap() {
+        assert!(serialized.get(field.as_str().unwrap()).is_some(), "{field}");
+    }
+    assert!(serialized["details"].is_object());
+    let variable_not_found = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "variable_not_found")
+        .expect("variable_not_found diagnostic");
+    for field in fixture["diagnostics"]["evaluationDetailFields"]
+        .as_array()
+        .unwrap()
+    {
+        assert!(
+            variable_not_found
+                .details
+                .contains_key(field.as_str().unwrap()),
+            "{field}"
+        );
+    }
+    let module_ready = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "module_ready")
+        .expect("module diagnostic");
+    assert_eq!(module_ready.module.as_deref(), Some("conformance"));
+    assert!(module_ready.details.is_empty());
+    let errors = errors.lock().unwrap();
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0].level, featurevisor::LogLevel::Error);
+
+    let setup_diagnostics = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let observed_setup = std::sync::Arc::clone(&setup_diagnostics);
+    let _ = create_featurevisor(FeaturevisorOptions {
+        on_diagnostic: Some(std::sync::Arc::new(move |diagnostic| {
+            observed_setup.lock().unwrap().push(diagnostic.clone())
+        })),
+        modules: vec![std::sync::Arc::new(PanickingModule)],
+        ..Default::default()
+    });
+    let setup_diagnostics = setup_diagnostics.lock().unwrap();
+    let setup_error = setup_diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code == "module_setup_error")
+        .expect("module setup diagnostic");
+    assert_eq!(setup_error.module_name.as_deref(), Some("broken"));
+    assert!(setup_error.original_error.is_some());
+    let module_ready_json = serde_json::to_value(module_ready).unwrap();
+    let setup_error_json = serde_json::to_value(setup_error).unwrap();
+    for field in fixture["diagnostics"]["moduleEnvelopeFields"]
+        .as_array()
+        .unwrap()
+    {
+        let field = field.as_str().unwrap();
+        let present =
+            module_ready_json.get(field).is_some() || setup_error_json.get(field).is_some();
+        assert!(present, "{field}");
+    }
+    assert!(fixture["diagnostics"]["errorEventLevels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|level| level == "error"));
+
+    let numeric = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(condition_feature(json!({
+            "attribute": "score",
+            "operator": "greaterThan",
+            "value": 1.5
+        })))),
+        ..Default::default()
+    });
+    for value in [AttributeValue::Integer(2), AttributeValue::Double(2.0)] {
+        let context = [("score".to_string(), value)].into_iter().collect();
+        assert!(numeric.is_enabled("feature", Some(&context)));
+    }
+    let includes = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(condition_feature(json!({
+            "attribute": "roles",
+            "operator": "includes",
+            "value": "admin"
+        })))),
+        ..Default::default()
+    });
+    let context = [(
+        "roles".to_string(),
+        AttributeValue::Array(vec![
+            AttributeValue::from("user"),
+            AttributeValue::from("admin"),
+        ]),
+    )]
+    .into_iter()
+    .collect();
+    assert!(includes.is_enabled("feature", Some(&context)));
 }

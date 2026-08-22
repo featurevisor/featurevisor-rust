@@ -1,5 +1,5 @@
 use super::options::BenchmarkOptions;
-use super::project::{build_datafile, input, list_targets, project_path};
+use super::project::{build_datafile, input, list_targets, project_path, unique_targets};
 use crate::FeaturevisorOptions;
 use serde_json::Value as JsonValue;
 use std::path::Path;
@@ -56,7 +56,7 @@ fn one(options: &BenchmarkOptions, project: &Path, target: Option<&str>) -> Resu
 
 pub fn run(options: BenchmarkOptions) -> Result<(), String> {
     let project = project_path(&options.common.project_directory_path);
-    let targets = if options.common.target.is_empty() {
+    let targets: Vec<Option<String>> = if options.common.target.is_empty() {
         vec![None]
     } else {
         let available = list_targets(&project)?;
@@ -65,15 +65,13 @@ pub fn run(options: BenchmarkOptions) -> Result<(), String> {
                 return Err(format!("Unknown target \"{target}\""));
             }
         }
-        options
-            .common
-            .target
-            .iter()
-            .map(|target| Some(target.as_str()))
+        unique_targets(options.common.target.clone())
+            .into_iter()
+            .map(Some)
             .collect()
     };
     for target in targets {
-        one(&options, &project, target)?;
+        one(&options, &project, target.as_deref())?;
     }
     Ok(())
 }

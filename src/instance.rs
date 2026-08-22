@@ -8,6 +8,7 @@ use crate::evaluate::{
 use crate::events::{
     ContextSetDetails, DatafileSetDetails, EventDetails, EventHandler, EventName, StickySetDetails,
 };
+use crate::helpers::panic_message;
 use crate::modules::{FeaturevisorModule, ModuleApi, ModuleSubscription};
 use crate::types::{
     Context, DatafileContent, DatafileInput, EvaluatedFeatures, Feature, Segment, StickyFeatures,
@@ -17,7 +18,7 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 const EMPTY_REVISION: &str = "unknown";
 
@@ -57,7 +58,7 @@ struct Inner {
     modules: Vec<ModuleRecord>,
     subscriptions: Vec<ModuleSubscription>,
     emitter: Emitter,
-    regex_cache: Arc<Mutex<HashMap<String, regex::Regex>>>,
+    regex_cache: Arc<RwLock<HashMap<String, regex::Regex>>>,
     closed: bool,
     next_module_id: u64,
 }
@@ -68,7 +69,7 @@ type Snapshot = (
     StickyFeatures,
     LogLevel,
     Vec<Arc<dyn FeaturevisorModule>>,
-    Arc<Mutex<HashMap<String, regex::Regex>>>,
+    Arc<RwLock<HashMap<String, regex::Regex>>>,
 );
 
 #[derive(Clone)]
@@ -88,7 +89,7 @@ pub fn create_featurevisor(options: FeaturevisorOptions) -> Featurevisor {
             modules: Vec::new(),
             subscriptions: Vec::new(),
             emitter: Emitter::default(),
-            regex_cache: Arc::new(Mutex::new(HashMap::new())),
+            regex_cache: Arc::new(RwLock::new(HashMap::new())),
             closed: false,
             next_module_id: 1,
         })),
@@ -266,7 +267,7 @@ impl Featurevisor {
                 merge_datafile(&previous, incoming)
             };
             inner.datafile = Arc::new(next.clone());
-            if let Ok(mut cache) = inner.regex_cache.lock() {
+            if let Ok(mut cache) = inner.regex_cache.write() {
                 cache.clear();
             }
             (previous, next, inner.emitter.clone())
@@ -463,20 +464,21 @@ impl Featurevisor {
         };
         let api = self.module_api(id, name.clone());
         let setup = catch_unwind(AssertUnwindSafe(|| module.setup(&api)));
-        if setup.is_err() {
+        if let Err(error) = setup {
             self.clear_module_subscriptions(id);
             let mut diagnostic =
                 Diagnostic::new(LogLevel::Error, "module_setup_error", "Module setup failed");
-            diagnostic.module_name = name;
+            diagnostic.module_name = name.clone();
+            diagnostic.original_error = Some(panic_message(error.as_ref()));
             self.report_diagnostic(diagnostic, None);
-            self.close_module(module);
+            self.close_module(module, name);
             return None;
         }
         if let Ok(mut inner) = self.inner.lock() {
             if inner.closed {
                 drop(inner);
                 self.clear_module_subscriptions(id);
-                self.close_module(module);
+                self.close_module(module, name);
                 return None;
             }
             inner.modules.push(ModuleRecord {
@@ -499,11 +501,12 @@ impl Featurevisor {
     fn remove_module_by_id(&self, id: u64) {
         let module = self.inner.lock().ok().and_then(|mut inner| {
             let index = inner.modules.iter().position(|module| module.id == id)?;
-            Some(inner.modules.remove(index).module)
+            let record = inner.modules.remove(index);
+            Some((record.module, record.name))
         });
         self.clear_module_subscriptions(id);
-        if let Some(module) = module {
-            self.close_module(module);
+        if let Some((module, name)) = module {
+            self.close_module(module, name);
         }
     }
     pub fn remove_module(&self, name: &str) {
@@ -527,15 +530,16 @@ impl Featurevisor {
             .unwrap_or_default();
         for record in modules {
             self.clear_module_subscriptions(record.id);
-            self.close_module(record.module);
+            self.close_module(record.module, record.name);
         }
     }
-    fn close_module(&self, module: Arc<dyn FeaturevisorModule>) {
-        if catch_unwind(AssertUnwindSafe(|| module.close())).is_err() {
-            self.report_diagnostic(
-                Diagnostic::new(LogLevel::Error, "module_close_error", "Module close failed"),
-                None,
-            );
+    fn close_module(&self, module: Arc<dyn FeaturevisorModule>, name: Option<String>) {
+        if let Err(error) = catch_unwind(AssertUnwindSafe(|| module.close())) {
+            let mut diagnostic =
+                Diagnostic::new(LogLevel::Error, "module_close_error", "Module close failed");
+            diagnostic.module_name = name;
+            diagnostic.original_error = Some(panic_message(error.as_ref()));
+            self.report_diagnostic(diagnostic, None);
         }
     }
 
@@ -783,7 +787,7 @@ impl Featurevisor {
             std::mem::take(&mut inner.modules)
         };
         for record in modules {
-            self.close_module(record.module);
+            self.close_module(record.module, record.name);
         }
     }
 

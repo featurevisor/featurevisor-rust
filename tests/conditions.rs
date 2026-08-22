@@ -3,6 +3,24 @@ use featurevisor::{
 };
 use serde_json::json;
 
+fn condition_feature(
+    segments: serde_json::Value,
+    conditions: serde_json::Value,
+) -> featurevisor::DatafileContent {
+    serde_json::from_value(json!({
+        "schemaVersion": "2",
+        "revision": "conditions",
+        "segments": { "segment": { "conditions": conditions } },
+        "features": {
+            "feature": {
+                "bucketBy": "userId",
+                "traffic": [{ "key": "rule", "segments": segments, "percentage": 100000, "enabled": true }]
+            }
+        }
+    }))
+    .unwrap()
+}
+
 fn context(values: &[(&str, AttributeValue)]) -> Context {
     values
         .iter()
@@ -83,4 +101,31 @@ fn equals_null_matches_a_null_context_attribute() {
     });
     let context = context(&[("device", featurevisor::AttributeValue::Null)]);
     assert!(f.is_enabled("feature", Some(&context)));
+}
+
+#[test]
+fn semver_comparison_zero_pads_missing_segments_and_prerelease_parts() {
+    for (context_version, condition_version) in [
+        ("1", "1.0.0"),
+        ("1.2", "1.2.0"),
+        ("1.2.3-alpha.0", "1.2.3-alpha"),
+    ] {
+        let datafile = condition_feature(
+            json!("segment"),
+            json!({
+                "attribute": "version",
+                "operator": "semverEquals",
+                "value": condition_version
+            }),
+        );
+        let f = create_featurevisor(FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(datafile)),
+            ..Default::default()
+        });
+        let context = context(&[("version", context_version.into())]);
+        assert!(
+            f.is_enabled("feature", Some(&context)),
+            "{context_version} should equal {condition_version}"
+        );
+    }
 }

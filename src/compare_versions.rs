@@ -1,9 +1,18 @@
 use regex::Regex;
 use std::cmp::Ordering;
+use std::sync::OnceLock;
+
+static SEMVER_REGEX: OnceLock<Regex> = OnceLock::new();
+
+fn semver_regex() -> &'static Regex {
+    SEMVER_REGEX.get_or_init(|| {
+        Regex::new(r"(?i)^[v\^~<>=]*?(\d+)(?:\.([x*]|\d+)(?:\.([x*]|\d+)(?:\.([x*]|\d+))?(?:-([\da-z\-]+(?:\.[\da-z\-]+)*))?(?:\+[\da-z\-]+(?:\.[\da-z\-]+)*)?)?)?$")
+            .expect("valid version regex")
+    })
+}
 
 fn parts(version: &str) -> Result<Vec<String>, String> {
-    let regex = Regex::new(r"(?i)^[v\^~<>=]*?(\d+)(?:\.([x*]|\d+)(?:\.([x*]|\d+)(?:\.([x*]|\d+))?(?:-([\da-z\-]+(?:\.[\da-z\-]+)*))?(?:\+[\da-z\-]+(?:\.[\da-z\-]+)*)?)?)?$").expect("valid version regex");
-    let captures = regex
+    let captures = semver_regex()
         .captures(version)
         .ok_or_else(|| format!("Invalid argument not valid semver ('{version}' received)"))?;
     Ok((1..=5)
@@ -17,6 +26,8 @@ fn parts(version: &str) -> Result<Vec<String>, String> {
 }
 
 fn compare_segment(left: &str, right: &str) -> Ordering {
+    let left = if left.is_empty() { "0" } else { left };
+    let right = if right.is_empty() { "0" } else { right };
     if left == "*"
         || left.eq_ignore_ascii_case("x")
         || right == "*"
@@ -47,13 +58,17 @@ pub(crate) fn compare_versions(left: &str, right: &str) -> Result<Ordering, Stri
         }
     }
     if !pre_a.is_empty() && !pre_b.is_empty() {
-        for (left_part, right_part) in pre_a.split('.').zip(pre_b.split('.')) {
+        let left_parts = pre_a.split('.').collect::<Vec<_>>();
+        let right_parts = pre_b.split('.').collect::<Vec<_>>();
+        for index in 0..left_parts.len().max(right_parts.len()) {
+            let left_part = left_parts.get(index).copied().unwrap_or("0");
+            let right_part = right_parts.get(index).copied().unwrap_or("0");
             let ordering = compare_segment(left_part, right_part);
             if ordering != Ordering::Equal {
                 return Ok(ordering);
             }
         }
-        return Ok(pre_a.split('.').count().cmp(&pre_b.split('.').count()));
+        return Ok(Ordering::Equal);
     }
     Ok(match (pre_a.is_empty(), pre_b.is_empty()) {
         (true, true) => Ordering::Equal,
