@@ -1,0 +1,67 @@
+name: Checks
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sdk:
+    name: SDK (Rust ${{ matrix.rust }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.74.0", stable]
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Build
+        run: cargo build --all-features
+      - name: Test
+        run: cargo test --all-features
+      - name: Format and lint
+        if: matrix.rust == 'stable'
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-features --all-targets -- -D warnings
+
+  example:
+    name: Featurevisor example 1
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: featurevisor-rust
+      - uses: actions/checkout@v7
+        with:
+          repository: featurevisor/featurevisor
+          ref: main
+          path: featurevisor
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: featurevisor/.nvmrc
+          cache: npm
+          cache-dependency-path: featurevisor/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build Featurevisor CLI
+        working-directory: featurevisor
+        run: |
+          npm ci
+          npm run build
+      - name: Run example project through Rust SDK
+        working-directory: featurevisor-rust
+        run: cargo run --features cli --bin featurevisor -- test --projectDirectoryPath=../featurevisor/examples/example-1 --onlyFailures

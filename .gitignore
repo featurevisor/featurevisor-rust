@@ -1,0 +1,11 @@
+/target
+/monorepo
+/example-1
+.DS_Store
+.idea
+.vscode
+*.swp
+.env
+.env.*
+*.pem
+*.key

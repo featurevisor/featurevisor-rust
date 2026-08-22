@@ -1,0 +1,32 @@
+[package]
+name = "featurevisor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.74.0"
+description = "Featurevisor SDK for Rust: feature flags, experiments, and remote configuration"
+license = "MIT"
+readme = "README.md"
+homepage = "https://featurevisor.com"
+documentation = "https://featurevisor.com/docs/sdks/rust/"
+repository = "https://github.com/featurevisor/featurevisor-rust"
+authors = ["Fahad Heylaal"]
+keywords = ["feature-flags", "featurevisor", "experimentation", "ab-testing", "remote-config"]
+categories = ["config", "development-tools"]
+exclude = ["/.github", "/Makefile", "/monorepo", "/example-1"]
+
+[features]
+default = []
+cli = ["dep:clap", "dep:uuid"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+chrono = { version = "0.4", default-features = false, features = ["std", "alloc"] }
+clap = { version = "4", features = ["derive"], optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
+
+[[bin]]
+name = "featurevisor"
+path = "src/bin/featurevisor.rs"
+required-features = ["cli"]
