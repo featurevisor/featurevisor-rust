@@ -11,6 +11,13 @@ pub type FeatureKey = String;
 pub type SegmentKey = String;
 pub type RuleKey = String;
 
+fn deserialize_condition_value<'de, D>(deserializer: D) -> Result<Option<JsonValue>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Some(JsonValue::deserialize(deserializer)?))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Operator {
@@ -46,7 +53,12 @@ pub enum Operator {
 pub struct PlainCondition {
     pub attribute: String,
     pub operator: Operator,
-    pub value: JsonValue,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_condition_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub value: Option<JsonValue>,
     #[serde(rename = "regexFlags", skip_serializing_if = "Option::is_none")]
     pub regex_flags: Option<String>,
 }
@@ -181,7 +193,9 @@ impl AttributeValue {
                 .or_else(|| value.as_f64().map(Self::Double))
                 .unwrap_or(Self::Null),
             JsonValue::String(value) => Self::String(value),
-            JsonValue::Array(values) => Self::Array(values.into_iter().map(Self::from_json).collect()),
+            JsonValue::Array(values) => {
+                Self::Array(values.into_iter().map(Self::from_json).collect())
+            }
             JsonValue::Object(values) => Self::Object(
                 values
                     .into_iter()
@@ -211,11 +225,15 @@ impl<'de> Deserialize<'de> for AttributeValue {
 }
 
 impl From<String> for AttributeValue {
-    fn from(value: String) -> Self { Self::String(value) }
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
 }
 
 impl From<&str> for AttributeValue {
-    fn from(value: &str) -> Self { Self::String(value.to_string()) }
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
 }
 
 macro_rules! impl_attribute_integer {
@@ -229,23 +247,33 @@ macro_rules! impl_attribute_integer {
 impl_attribute_integer!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
 impl From<f32> for AttributeValue {
-    fn from(value: f32) -> Self { Self::Double(value as f64) }
+    fn from(value: f32) -> Self {
+        Self::Double(value as f64)
+    }
 }
 
 impl From<f64> for AttributeValue {
-    fn from(value: f64) -> Self { Self::Double(value) }
+    fn from(value: f64) -> Self {
+        Self::Double(value)
+    }
 }
 
 impl From<bool> for AttributeValue {
-    fn from(value: bool) -> Self { Self::Boolean(value) }
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
 }
 
 impl From<DateTime<FixedOffset>> for AttributeValue {
-    fn from(value: DateTime<FixedOffset>) -> Self { Self::Date(value) }
+    fn from(value: DateTime<FixedOffset>) -> Self {
+        Self::Date(value)
+    }
 }
 
 impl From<HashMap<String, AttributeValue>> for AttributeValue {
-    fn from(value: HashMap<String, AttributeValue>) -> Self { Self::Object(value) }
+    fn from(value: HashMap<String, AttributeValue>) -> Self {
+        Self::Object(value)
+    }
 }
 
 impl<T: Into<AttributeValue>> From<Vec<T>> for AttributeValue {
@@ -261,23 +289,33 @@ impl<T: Into<AttributeValue>> From<Option<T>> for AttributeValue {
 }
 
 impl From<String> for VariableValue {
-    fn from(value: String) -> Self { Self::String(value) }
+    fn from(value: String) -> Self {
+        Self::String(value)
+    }
 }
 
 impl From<&str> for VariableValue {
-    fn from(value: &str) -> Self { Self::String(value.to_string()) }
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
 }
 
 impl From<bool> for VariableValue {
-    fn from(value: bool) -> Self { Self::Boolean(value) }
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
 }
 
 impl From<i64> for VariableValue {
-    fn from(value: i64) -> Self { Self::Integer(value) }
+    fn from(value: i64) -> Self {
+        Self::Integer(value)
+    }
 }
 
 impl From<f64> for VariableValue {
-    fn from(value: f64) -> Self { Self::Double(value) }
+    fn from(value: f64) -> Self {
+        Self::Double(value)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -285,7 +323,10 @@ pub struct DatafileContent {
     #[serde(rename = "schemaVersion")]
     pub schema_version: String,
     pub revision: String,
-    #[serde(rename = "featurevisorVersion", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "featurevisorVersion",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub featurevisor_version: Option<String>,
     pub segments: HashMap<String, Segment>,
     pub features: HashMap<String, Feature>,
@@ -319,7 +360,9 @@ pub enum BucketBy {
 }
 
 impl Default for BucketBy {
-    fn default() -> Self { Self::Plain("userId".to_string()) }
+    fn default() -> Self {
+        Self::Plain("userId".to_string())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -339,7 +382,10 @@ pub struct ResolvedVariableSchema {
     pub variable_type: String,
     #[serde(rename = "defaultValue")]
     pub default_value: VariableValue,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "useDefaultWhenDisabled")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "useDefaultWhenDisabled"
+    )]
     pub use_default_when_disabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "disabledValue")]
     pub disabled_value: Option<VariableValue>,
@@ -418,7 +464,7 @@ pub struct Force {
     pub variables: Option<HashMap<String, VariableValue>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Feature {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
@@ -430,7 +476,10 @@ pub struct Feature {
     pub required: Option<Vec<Required>>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "variablesSchema")]
     pub variables_schema: Option<HashMap<String, ResolvedVariableSchema>>,
-    #[serde(skip_serializing_if = "Option::is_none", rename = "disabledVariationValue")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        rename = "disabledVariationValue"
+    )]
     pub disabled_variation_value: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variations: Option<Vec<Variation>>,
@@ -441,24 +490,6 @@ pub struct Feature {
     pub force: Option<Vec<Force>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ranges: Option<Vec<[f64; 2]>>,
-}
-
-impl Default for Feature {
-    fn default() -> Self {
-        Self {
-            key: None,
-            hash: None,
-            deprecated: None,
-            required: None,
-            variables_schema: None,
-            disabled_variation_value: None,
-            variations: None,
-            bucket_by: BucketBy::default(),
-            traffic: Vec::new(),
-            force: None,
-            ranges: None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

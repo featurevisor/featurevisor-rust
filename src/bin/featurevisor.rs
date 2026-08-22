@@ -6,5 +6,8 @@ fn main() {
         eprintln!("{error}");
         std::process::exit(2);
     });
-    if let Err(error) = run(cli) { eprintln!("{error}"); std::process::exit(1); }
+    if let Err(error) = run(cli) {
+        eprintln!("{error}");
+        std::process::exit(1);
+    }
 }

@@ -1,5 +1,5 @@
 use crate::diagnostics::{Diagnostic, DiagnosticHandler, LogLevel};
-use crate::evaluate::{Evaluation, EvaluateOptions};
+use crate::evaluate::{EvaluateOptions, Evaluation};
 use crate::types::{BucketBy, Context};
 use crate::Unsubscribe;
 use std::sync::Arc;
@@ -47,9 +47,9 @@ pub trait FeaturevisorModule: Send + Sync {
 }
 
 pub struct ModuleApi {
-    get_revision: Arc<dyn Fn() -> String + Send + Sync>,
-    on_diagnostic: Arc<dyn Fn(DiagnosticHandler, LogLevel) -> Unsubscribe + Send + Sync>,
-    report_diagnostic: Arc<dyn Fn(Diagnostic) + Send + Sync>,
+    pub(crate) get_revision: Arc<dyn Fn() -> String + Send + Sync>,
+    pub(crate) on_diagnostic: Arc<dyn Fn(DiagnosticHandler, LogLevel) -> Unsubscribe + Send + Sync>,
+    pub(crate) report_diagnostic: Arc<dyn Fn(Diagnostic) + Send + Sync>,
 }
 
 impl ModuleApi {

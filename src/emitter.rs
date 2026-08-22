@@ -19,10 +19,12 @@ pub(crate) struct Emitter {
 impl Emitter {
     pub fn on(&self, event: EventName, callback: EventHandler) -> Unsubscribe {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.listeners.lock().unwrap().entry(event).or_default().push(Listener {
-            id,
-            callback,
-        });
+        self.listeners
+            .lock()
+            .unwrap()
+            .entry(event)
+            .or_default()
+            .push(Listener { id, callback });
         let listeners = Arc::clone(&self.listeners);
         let active = Arc::new(AtomicBool::new(true));
         let active_for_closure = Arc::clone(&active);
@@ -43,9 +45,14 @@ impl Emitter {
             .listeners
             .lock()
             .ok()
-            .and_then(|listeners| listeners.get(&event).map(|values| {
-                values.iter().map(|listener| Arc::clone(&listener.callback)).collect()
-            }))
+            .and_then(|listeners| {
+                listeners.get(&event).map(|values| {
+                    values
+                        .iter()
+                        .map(|listener| Arc::clone(&listener.callback))
+                        .collect()
+                })
+            })
             .unwrap_or_default();
         for callback in callbacks {
             let _ = catch_unwind(AssertUnwindSafe(|| callback(&details)));

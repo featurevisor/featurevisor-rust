@@ -1,4 +1,6 @@
-use featurevisor::{context, create_featurevisor, AttributeValue, DatafileInput, Featurevisor, FeaturevisorOptions};
+use featurevisor::{
+    context, create_featurevisor, AttributeValue, DatafileInput, Featurevisor, FeaturevisorOptions,
+};
 use serde_json::json;
 
 fn assert_send_sync<T: Send + Sync>() {}

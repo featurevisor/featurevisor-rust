@@ -1,4 +1,7 @@
-use featurevisor::{create_featurevisor, AttributeValue, Context, DatafileInput, FeaturevisorOptions, MAX_BUCKETED_NUMBER};
+use featurevisor::{
+    create_featurevisor, AttributeValue, Context, DatafileInput, FeaturevisorOptions,
+    MAX_BUCKETED_NUMBER,
+};
 use serde_json::json;
 
 #[test]

@@ -1,4 +1,5 @@
 use crate::types::{AttributeValue, Context};
+#[cfg(feature = "cli")]
 use serde_json::Value as JsonValue;
 
 pub fn format_js_number(value: f64) -> String {
@@ -58,9 +59,14 @@ fn format_scientific(mantissa: &str, exponent: i32) -> String {
 fn to_scientific(value: &str) -> String {
     let (integer, fraction) = value.split_once('.').unwrap_or((value, ""));
     let digits = format!("{integer}{fraction}");
-    let leading_zeroes = digits.chars().take_while(|character| *character == '0').count();
+    let leading_zeroes = digits
+        .chars()
+        .take_while(|character| *character == '0')
+        .count();
     let significant = &digits[leading_zeroes..];
-    if significant.is_empty() { return "0".to_string(); }
+    if significant.is_empty() {
+        return "0".to_string();
+    }
     let significant = significant.trim_end_matches('0');
     let first = significant.chars().next().unwrap_or('0');
     let rest = significant.get(first.len_utf8()..).unwrap_or("");
@@ -105,6 +111,7 @@ pub fn context_value<'a>(context: &'a Context, path: &str) -> Option<&'a Attribu
     Some(current)
 }
 
+#[cfg(feature = "cli")]
 pub fn json_to_context(value: &JsonValue) -> Option<Context> {
     match value {
         JsonValue::Object(values) => Some(

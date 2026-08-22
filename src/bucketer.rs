@@ -21,7 +21,11 @@ pub(crate) fn get_bucket_key(
         BucketBy::And(values) => ("and", values.iter().map(String::as_str).collect()),
         BucketBy::Or { or } => ("or", or.iter().map(String::as_str).collect()),
         BucketBy::Invalid(_) => {
-            report(Diagnostic::new(LogLevel::Error, "invalid_bucket_by", "Invalid bucketBy"));
+            report(Diagnostic::new(
+                LogLevel::Error,
+                "invalid_bucket_by",
+                "Invalid bucketBy",
+            ));
             return Err("invalid bucketBy".to_string());
         }
     };
@@ -37,7 +41,11 @@ pub(crate) fn get_bucket_key(
     parts.push(feature_key.to_string());
 
     if parts.is_empty() {
-        report(Diagnostic::new(LogLevel::Error, "invalid_bucket_by", "Invalid bucketBy"));
+        report(Diagnostic::new(
+            LogLevel::Error,
+            "invalid_bucket_by",
+            "Invalid bucketBy",
+        ));
         return Err("invalid bucketBy".to_string());
     }
 

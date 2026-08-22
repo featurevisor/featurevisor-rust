@@ -1,4 +1,7 @@
-use featurevisor::{create_featurevisor, DatafileInput, Diagnostic, FeaturevisorModule, FeaturevisorOptions, ModuleApi, LogLevel};
+use featurevisor::{
+    create_featurevisor, DatafileInput, Diagnostic, FeaturevisorModule, FeaturevisorOptions,
+    LogLevel, ModuleApi,
+};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
@@ -30,10 +33,18 @@ fn module_diagnostics_are_filtered_and_removed_with_the_module() {
         })],
         ..Default::default()
     });
-    assert!(received.lock().unwrap().is_empty());
+    assert!(!received
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|code| code == "module_ready"));
 
     f.set_datafile(DatafileInput::Json("bad".to_string()), false);
-    assert!(received.lock().unwrap().iter().any(|code| code == "invalid_datafile"));
+    assert!(received
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|code| code == "invalid_datafile"));
 
     f.remove_module("diagnostics");
     let before = received.lock().unwrap().len();

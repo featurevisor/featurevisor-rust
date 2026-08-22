@@ -1,7 +1,12 @@
 use super::options::TestOptions;
-use super::project::{build_datafile, datafile_key, input, json_command, list_targets, project_path};
+use super::project::{
+    build_datafile, datafile_key, input, json_command, list_targets, project_path,
+};
 use crate::modules::ConfigureBucketValueOptions;
-use crate::{Featurevisor, FeaturevisorChild, FeaturevisorModule, FeaturevisorOptions, LogLevel, OverrideOptions, SpawnOptions};
+use crate::{
+    Featurevisor, FeaturevisorChild, FeaturevisorModule, FeaturevisorOptions, LogLevel,
+    OverrideOptions, Segment, SpawnOptions,
+};
 use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
 use std::path::Path;
@@ -39,7 +44,11 @@ fn log_level(options: &TestOptions) -> LogLevel {
     }
 }
 
-fn json_equal(actual: Option<&crate::VariableValue>, expected: &JsonValue, variable_type: &str) -> bool {
+fn json_equal(
+    actual: Option<&crate::VariableValue>,
+    expected: &JsonValue,
+    variable_type: &str,
+) -> bool {
     let mut expected = expected.clone();
     if variable_type == "json" {
         if let Some(value) = expected.as_str() {
@@ -48,7 +57,10 @@ fn json_equal(actual: Option<&crate::VariableValue>, expected: &JsonValue, varia
             }
         }
     }
-    actual.map(crate::VariableValue::to_json).unwrap_or(JsonValue::Null) == expected
+    actual
+        .map(crate::VariableValue::to_json)
+        .unwrap_or(JsonValue::Null)
+        == expected
 }
 
 fn compare_evaluation(
@@ -74,23 +86,49 @@ fn compare_evaluations(
     assertion: &JsonValue,
     sdk: &Featurevisor,
 ) {
-    let Some(expected_evaluations) = assertion.get("expectedEvaluations").and_then(JsonValue::as_object) else {
+    let Some(expected_evaluations) = assertion
+        .get("expectedEvaluations")
+        .and_then(JsonValue::as_object)
+    else {
         return;
     };
 
-    if let Some(expected) = expected_evaluations.get("flag").and_then(JsonValue::as_object) {
-        let actual = serde_json::to_value(sdk.evaluate_flag(feature_key, None)).unwrap_or(JsonValue::Null);
+    if let Some(expected) = expected_evaluations
+        .get("flag")
+        .and_then(JsonValue::as_object)
+    {
+        let actual =
+            serde_json::to_value(sdk.evaluate_flag(feature_key, None)).unwrap_or(JsonValue::Null);
         compare_evaluation(errors, feature_key, "flag", expected, &actual);
     }
-    if let Some(expected) = expected_evaluations.get("variation").and_then(JsonValue::as_object) {
-        let actual = serde_json::to_value(sdk.evaluate_variation(feature_key, None, None)).unwrap_or(JsonValue::Null);
+    if let Some(expected) = expected_evaluations
+        .get("variation")
+        .and_then(JsonValue::as_object)
+    {
+        let actual = serde_json::to_value(sdk.evaluate_variation(feature_key, None, None))
+            .unwrap_or(JsonValue::Null);
         compare_evaluation(errors, feature_key, "variation", expected, &actual);
     }
-    if let Some(expected_variables) = expected_evaluations.get("variables").and_then(JsonValue::as_object) {
+    if let Some(expected_variables) = expected_evaluations
+        .get("variables")
+        .and_then(JsonValue::as_object)
+    {
         for (variable_key, expected) in expected_variables {
             if let Some(expected) = expected.as_object() {
-                let actual = serde_json::to_value(sdk.evaluate_variable(feature_key, variable_key, None, None)).unwrap_or(JsonValue::Null);
-                compare_evaluation(errors, feature_key, &format!("variable {variable_key}"), expected, &actual);
+                let actual = serde_json::to_value(sdk.evaluate_variable(
+                    feature_key,
+                    variable_key,
+                    None,
+                    None,
+                ))
+                .unwrap_or(JsonValue::Null);
+                compare_evaluation(
+                    errors,
+                    feature_key,
+                    &format!("variable {variable_key}"),
+                    expected,
+                    &actual,
+                );
             }
         }
     }
@@ -102,23 +140,49 @@ fn compare_child_evaluations(
     assertion: &JsonValue,
     child: &FeaturevisorChild,
 ) {
-    let Some(expected_evaluations) = assertion.get("expectedEvaluations").and_then(JsonValue::as_object) else {
+    let Some(expected_evaluations) = assertion
+        .get("expectedEvaluations")
+        .and_then(JsonValue::as_object)
+    else {
         return;
     };
 
-    if let Some(expected) = expected_evaluations.get("flag").and_then(JsonValue::as_object) {
-        let actual = serde_json::to_value(child.evaluate_flag(feature_key, None)).unwrap_or(JsonValue::Null);
+    if let Some(expected) = expected_evaluations
+        .get("flag")
+        .and_then(JsonValue::as_object)
+    {
+        let actual =
+            serde_json::to_value(child.evaluate_flag(feature_key, None)).unwrap_or(JsonValue::Null);
         compare_evaluation(errors, feature_key, "child flag", expected, &actual);
     }
-    if let Some(expected) = expected_evaluations.get("variation").and_then(JsonValue::as_object) {
-        let actual = serde_json::to_value(child.evaluate_variation(feature_key, None, None)).unwrap_or(JsonValue::Null);
+    if let Some(expected) = expected_evaluations
+        .get("variation")
+        .and_then(JsonValue::as_object)
+    {
+        let actual = serde_json::to_value(child.evaluate_variation(feature_key, None, None))
+            .unwrap_or(JsonValue::Null);
         compare_evaluation(errors, feature_key, "child variation", expected, &actual);
     }
-    if let Some(expected_variables) = expected_evaluations.get("variables").and_then(JsonValue::as_object) {
+    if let Some(expected_variables) = expected_evaluations
+        .get("variables")
+        .and_then(JsonValue::as_object)
+    {
         for (variable_key, expected) in expected_variables {
             if let Some(expected) = expected.as_object() {
-                let actual = serde_json::to_value(child.evaluate_variable(feature_key, variable_key, None, None)).unwrap_or(JsonValue::Null);
-                compare_evaluation(errors, feature_key, &format!("child variable {variable_key}"), expected, &actual);
+                let actual = serde_json::to_value(child.evaluate_variable(
+                    feature_key,
+                    variable_key,
+                    None,
+                    None,
+                ))
+                .unwrap_or(JsonValue::Null);
+                compare_evaluation(
+                    errors,
+                    feature_key,
+                    &format!("child variable {variable_key}"),
+                    expected,
+                    &actual,
+                );
             }
         }
     }
@@ -130,7 +194,10 @@ fn compare_variables(
     assertion: &JsonValue,
     sdk: &Featurevisor,
 ) {
-    let Some(expected_variables) = assertion.get("expectedVariables").and_then(JsonValue::as_object) else {
+    let Some(expected_variables) = assertion
+        .get("expectedVariables")
+        .and_then(JsonValue::as_object)
+    else {
         return;
     };
     let feature = sdk.get_feature(feature_key);
@@ -141,7 +208,9 @@ fn compare_variables(
             .and_then(|feature| feature.variables_schema.as_ref())
             .and_then(|schemas| schemas.get(variable_key))
         else {
-            errors.push(format!("{feature_key}.{variable_key}: variable schema not found"));
+            errors.push(format!(
+                "{feature_key}.{variable_key}: variable schema not found"
+            ));
             continue;
         };
         let default_value = assertion
@@ -160,7 +229,9 @@ fn compare_variables(
         if !json_equal(actual.as_ref(), expected, &schema.variable_type) {
             errors.push(format!(
                 "{feature_key}.{variable_key}: expected {expected}, got {}",
-                actual.map(|value| value.to_json()).unwrap_or(JsonValue::Null)
+                actual
+                    .map(|value| value.to_json())
+                    .unwrap_or(JsonValue::Null)
             ));
         }
     }
@@ -172,7 +243,10 @@ fn compare_child_variables(
     assertion: &JsonValue,
     child: &FeaturevisorChild,
 ) {
-    let Some(expected_variables) = assertion.get("expectedVariables").and_then(JsonValue::as_object) else {
+    let Some(expected_variables) = assertion
+        .get("expectedVariables")
+        .and_then(JsonValue::as_object)
+    else {
         return;
     };
     for (variable_key, expected) in expected_variables {
@@ -189,10 +263,17 @@ fn compare_child_variables(
                 default_variable_value: default_value,
             }),
         );
-        if actual.as_ref().map(crate::VariableValue::to_json).unwrap_or(JsonValue::Null) != *expected {
+        if actual
+            .as_ref()
+            .map(crate::VariableValue::to_json)
+            .unwrap_or(JsonValue::Null)
+            != *expected
+        {
             errors.push(format!(
                 "{feature_key}.{variable_key}: child expected {expected}, got {}",
-                actual.map(|value| value.to_json()).unwrap_or(JsonValue::Null)
+                actual
+                    .map(|value| value.to_json())
+                    .unwrap_or(JsonValue::Null)
             ));
         }
     }
@@ -218,14 +299,21 @@ fn compare_children(
                     .and_then(|value| serde_json::from_value(value.clone()).ok()),
             },
         );
-        if let Some(expected) = child.get("expectedToBeEnabled").and_then(JsonValue::as_bool) {
+        if let Some(expected) = child
+            .get("expectedToBeEnabled")
+            .and_then(JsonValue::as_bool)
+        {
             if child_sdk.is_enabled(feature_key, None) != expected {
-                errors.push(format!("{feature_key}: child {index} expected enabled {expected}"));
+                errors.push(format!(
+                    "{feature_key}: child {index} expected enabled {expected}"
+                ));
             }
         }
         if let Some(expected) = child.get("expectedVariation").and_then(JsonValue::as_str) {
             if child_sdk.get_variation(feature_key, None, None).as_deref() != Some(expected) {
-                errors.push(format!("{feature_key}: child {index} expected variation {expected}"));
+                errors.push(format!(
+                    "{feature_key}: child {index} expected variation {expected}"
+                ));
             }
         }
         compare_child_variables(errors, feature_key, child, &child_sdk);
@@ -240,6 +328,7 @@ fn run_assertion(
     options: &TestOptions,
     target_keys: &[String],
     datafiles: &HashMap<String, crate::DatafileContent>,
+    segments: &HashMap<String, Segment>,
 ) -> Result<Vec<String>, String> {
     let feature_key = test.get("feature").and_then(JsonValue::as_str);
     let segment_key = test.get("segment").and_then(JsonValue::as_str);
@@ -255,11 +344,15 @@ fn run_assertion(
     if let Some(segment_key) = segment_key {
         let datafile = base_datafile(datafiles, environment);
         let Some(datafile) = datafile else {
-            return Err(format!("No datafile available for segment assertion {segment_key}"));
+            return Err(format!(
+                "No datafile available for segment assertion {segment_key}"
+            ));
         };
         let context = context_from_json(assertion.get("context"));
+        let mut segment_datafile = datafile.clone();
+        segment_datafile.segments = segments.clone();
         let f = crate::create_featurevisor(FeaturevisorOptions {
-            datafile: Some(input(datafile.clone())),
+            datafile: Some(input(segment_datafile)),
             context: Some(context.clone()),
             log_level: Some(log_level(options)),
             ..Default::default()
@@ -275,7 +368,9 @@ fn run_assertion(
         return if actual == expected {
             Ok(Vec::new())
         } else {
-            Ok(vec![format!("{segment_key}: expected segment match {expected}, got {actual}")])
+            Ok(vec![format!(
+                "{segment_key}: expected segment match {expected}, got {actual}"
+            )])
         };
     }
 
@@ -287,10 +382,15 @@ fn run_assertion(
         .get(&selected_key)
         .or_else(|| base_datafile(datafiles, environment));
     let Some(datafile) = datafile else {
-        return Err(format!("No datafile available for feature assertion {feature_key}"));
+        return Err(format!(
+            "No datafile available for feature assertion {feature_key}"
+        ));
     };
     if options.common.show_datafile {
-        println!("{}", serde_json::to_string_pretty(datafile).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(datafile).unwrap_or_default()
+        );
     }
 
     let context = context_from_json(assertion.get("context"));
@@ -311,17 +411,18 @@ fn run_assertion(
     });
     let mut errors = Vec::new();
 
-    if f.get_feature(feature_key).is_none() {
-        errors.push(format!("{feature_key}: feature not found"));
-        return Ok(errors);
-    }
-
-    if let Some(expected) = assertion.get("expectedToBeEnabled").and_then(JsonValue::as_bool) {
+    if let Some(expected) = assertion
+        .get("expectedToBeEnabled")
+        .and_then(JsonValue::as_bool)
+    {
         if f.is_enabled(feature_key, None) != expected {
             errors.push(format!("{feature_key}: expected enabled {expected}"));
         }
     }
-    if let Some(expected) = assertion.get("expectedVariation").and_then(JsonValue::as_str) {
+    if let Some(expected) = assertion
+        .get("expectedVariation")
+        .and_then(JsonValue::as_str)
+    {
         let options = OverrideOptions {
             default_variation_value: assertion
                 .get("defaultVariationValue")
@@ -329,7 +430,10 @@ fn run_assertion(
                 .map(str::to_string),
             default_variable_value: None,
         };
-        if f.get_variation(feature_key, None, Some(&options)).as_deref() != Some(expected) {
+        if f.get_variation(feature_key, None, Some(&options))
+            .as_deref()
+            != Some(expected)
+        {
             errors.push(format!("{feature_key}: expected variation {expected}"));
         }
     }
@@ -359,7 +463,7 @@ fn build_test_datafiles(
 
 fn project_environments(project: &Path) -> Result<Vec<Option<String>>, String> {
     let config = json_command(project, "config", Vec::new())?;
-    let environments = config
+    let configured = config
         .get("environments")
         .and_then(JsonValue::as_array)
         .map(|values| {
@@ -371,20 +475,40 @@ fn project_environments(project: &Path) -> Result<Vec<Option<String>>, String> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    if environments.is_empty() {
+    if configured.is_empty() {
         Ok(vec![None])
     } else {
-        Ok(environments)
+        Ok(configured)
     }
+}
+
+fn project_segments(project: &Path) -> Result<HashMap<String, Segment>, String> {
+    let value = json_command(project, "list", vec!["--segments".to_string()])?;
+    let items = value
+        .as_array()
+        .ok_or_else(|| "Expected segments JSON array".to_string())?;
+    let mut segments = HashMap::new();
+    for item in items {
+        let Some(key) = item.get("key").and_then(JsonValue::as_str) else {
+            continue;
+        };
+        let segment = serde_json::from_value::<Segment>(item.clone())
+            .map_err(|error| format!("Could not parse segment {key}: {error}"))?;
+        segments.insert(key.to_string(), segment);
+    }
+    Ok(segments)
 }
 
 fn base_datafile<'a>(
     datafiles: &'a HashMap<String, crate::DatafileContent>,
     environment: Option<&str>,
 ) -> Option<&'a crate::DatafileContent> {
-    datafiles
-        .get(&datafile_key(environment, None))
-        .or_else(|| datafiles.iter().find(|(key, _)| !key.contains("-target-")).map(|(_, value)| value))
+    datafiles.get(&datafile_key(environment, None)).or_else(|| {
+        datafiles
+            .iter()
+            .find(|(key, _)| !key.contains("-target-"))
+            .map(|(_, value)| value)
+    })
 }
 
 pub fn run(options: TestOptions) -> Result<(), String> {
@@ -400,16 +524,29 @@ pub fn run(options: TestOptions) -> Result<(), String> {
         }
         options.common.target.clone()
     };
-    let value = json_command(&project, "list", vec!["--tests".to_string(), "--apply-matrix".to_string()])?;
+    let value = json_command(
+        &project,
+        "list",
+        vec!["--tests".to_string(), "--apply-matrix".to_string()],
+    )?;
     let tests = value
         .as_array()
         .ok_or_else(|| "Expected tests JSON array".to_string())?;
     let environments = project_environments(&project)?;
-    let datafiles = build_test_datafiles(&project, &environments, &target_keys, options.common.inflate)?;
+    let segments = project_segments(&project)?;
+    let datafiles = build_test_datafiles(
+        &project,
+        &environments,
+        &target_keys,
+        options.common.inflate,
+    )?;
     let mut failures = 0usize;
 
     for test in tests {
-        let key = test.get("key").and_then(JsonValue::as_str).unwrap_or("unknown");
+        let key = test
+            .get("key")
+            .and_then(JsonValue::as_str)
+            .unwrap_or("unknown");
         if options
             .key_pattern
             .as_ref()
@@ -420,17 +557,13 @@ pub fn run(options: TestOptions) -> Result<(), String> {
         let mut test_failed = false;
         if let Some(assertions) = test.get("assertions").and_then(JsonValue::as_array) {
             for assertion in assertions {
-                if options
-                    .assertion_pattern
-                    .as_ref()
-                    .is_some_and(|pattern| {
-                        !assertion
-                            .get("description")
-                            .and_then(JsonValue::as_str)
-                            .unwrap_or("")
-                            .contains(pattern)
-                    })
-                {
+                if options.assertion_pattern.as_ref().is_some_and(|pattern| {
+                    !assertion
+                        .get("description")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or("")
+                        .contains(pattern)
+                }) {
                     continue;
                 }
                 let errors = run_assertion(
@@ -439,6 +572,7 @@ pub fn run(options: TestOptions) -> Result<(), String> {
                     &options,
                     &target_keys,
                     &datafiles,
+                    &segments,
                 )?;
                 if !errors.is_empty() {
                     test_failed = true;

@@ -1,4 +1,6 @@
-use featurevisor::{create_featurevisor, DatafileInput, EventDetails, EventName, FeaturevisorOptions};
+use featurevisor::{
+    create_featurevisor, DatafileInput, EventDetails, EventName, FeaturevisorOptions,
+};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
@@ -23,7 +25,7 @@ fn featurevisor_version_is_preserved_and_invalid_datafiles_do_not_emit_datafile_
 
     let events = Arc::new(Mutex::new(0));
     let observed = Arc::clone(&events);
-    f.on(
+    let _unsubscribe = f.on(
         EventName::DatafileSet,
         Arc::new(move |details| {
             if matches!(details, EventDetails::DatafileSet(_)) {
