@@ -60,25 +60,27 @@ fn condition_is_matched(
 ) -> Result<bool, String> {
     let context_value = context_value(context, &condition.attribute);
     let operator = &condition.operator;
-    if condition.value.is_none() && !matches!(operator, Operator::Exists | Operator::NotExists) {
-        return Ok(false);
+    if condition.value.is_none() {
+        return Ok(match operator {
+            Operator::Exists => context_value.is_some(),
+            Operator::NotExists => context_value.is_none(),
+            _ => false,
+        });
     }
-    let value = condition.value.as_ref();
+    let Some(value) = condition.value.as_ref() else {
+        return Ok(false);
+    };
 
     let result = match operator {
-        Operator::Equals => context_value
-            .map(|v| js_equals(v, value.expect("value is required")))
-            .unwrap_or(false),
-        Operator::NotEquals => context_value
-            .map(|v| !js_equals(v, value.expect("value is required")))
-            .unwrap_or(true),
+        Operator::Equals => context_value.map(|v| js_equals(v, value)).unwrap_or(false),
+        Operator::NotEquals => context_value.map(|v| !js_equals(v, value)).unwrap_or(true),
         Operator::Before | Operator::After => {
             let left = context_value.and_then(|v| match v {
                 AttributeValue::Date(date) => Some(*date),
                 AttributeValue::String(value) => parse_date(value),
                 _ => None,
             });
-            let right = json_string(value.expect("value is required")).and_then(parse_date);
+            let right = json_string(value).and_then(parse_date);
             match (left, right) {
                 (Some(left), Some(right)) => {
                     if matches!(*operator, Operator::Before) {
@@ -104,7 +106,6 @@ fn condition_is_matched(
                 return Ok(false);
             }
             let matches = value
-                .expect("value is required")
                 .as_array()
                 .map(|values| values.iter().any(|item| js_equals(context_value, item)))
                 .unwrap_or(false);
@@ -126,7 +127,7 @@ fn condition_is_matched(
         | Operator::SemverGreaterThanOrEquals
         | Operator::SemverLessThan
         | Operator::SemverLessThanOrEquals => {
-            let (left, right) = match (context_value, value.expect("value is required").as_str()) {
+            let (left, right) = match (context_value, value.as_str()) {
                 (Some(AttributeValue::String(left)), Some(right)) => (left, right),
                 _ => return Ok(false),
             };
@@ -168,7 +169,7 @@ fn condition_is_matched(
         | Operator::GreaterThanOrEquals
         | Operator::LessThan
         | Operator::LessThanOrEquals => {
-            let (left, right) = match (context_value, value.expect("value is required").as_f64()) {
+            let (left, right) = match (context_value, value.as_f64()) {
                 (Some(AttributeValue::Integer(left)), Some(right)) => (*left as f64, right),
                 (Some(AttributeValue::Double(left)), Some(right)) => (*left, right),
                 _ => return Ok(false),
@@ -187,15 +188,14 @@ fn condition_is_matched(
             let Some(AttributeValue::Array(values)) = context_value else {
                 return Ok(false);
             };
-            let matches = values
-                .iter()
-                .any(|item| js_equals(item, value.expect("value is required")));
+            let matches = values.iter().any(|item| js_equals(item, value));
             if matches!(*operator, Operator::Includes) {
                 matches
             } else {
                 !matches
             }
         }
+        Operator::Unknown => false,
     };
     Ok(result)
 }

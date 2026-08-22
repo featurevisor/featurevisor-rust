@@ -11,6 +11,10 @@ fn context(value: &str) -> Result<crate::Context, String> {
         .ok_or_else(|| "Context must be a JSON object".to_string())
 }
 
+fn duration_ms(nanoseconds: u128) -> String {
+    format!("{:.6}ms", nanoseconds as f64 / 1_000_000.0)
+}
+
 fn one(options: &BenchmarkOptions, project: &Path, target: Option<&str>) -> Result<(), String> {
     let datafile = build_datafile(
         project,
@@ -40,17 +44,30 @@ fn one(options: &BenchmarkOptions, project: &Path, target: Option<&str>) -> Resu
     let max = *durations.iter().max().unwrap_or(&0);
     let total: u128 = durations.iter().sum();
     let average = total / durations.len() as u128;
+    let evaluation = if options.variable.is_some() {
+        "variable"
+    } else if options.variation {
+        "variation"
+    } else {
+        "flag"
+    };
+    println!();
+    println!("Benchmark Featurevisor feature");
+    println!("  Feature: {}", options.feature);
     println!(
-        "Benchmark{}",
-        target
-            .map(|target| format!(" target={target}"))
-            .unwrap_or_default()
+        "  Environment: {}",
+        options.common.environment.as_deref().unwrap_or("false")
     );
-    println!("  Evaluations: {n}");
-    println!("  Minimum duration: {min}ns");
-    println!("  Average duration: {average}ns");
-    println!("  Maximum duration: {max}ns");
-    println!("  Total duration: {total}ns");
+    if let Some(target) = target {
+        println!("  Target: {target}");
+    }
+    println!("  Iterations: {n}");
+    println!("  Context: {}", options.context);
+    println!("  Evaluation: {evaluation}");
+    println!("  Minimum duration: {}", duration_ms(min));
+    println!("  Average duration: {}", duration_ms(average));
+    println!("  Maximum duration: {}", duration_ms(max));
+    println!("  Total duration: {}", duration_ms(total));
     Ok(())
 }
 
@@ -74,4 +91,15 @@ pub fn run(options: BenchmarkOptions) -> Result<(), String> {
         one(&options, &project, target.as_deref())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::duration_ms;
+
+    #[test]
+    fn durations_are_reported_as_fractional_milliseconds() {
+        assert_eq!(duration_ms(416), "0.000416ms");
+        assert_eq!(duration_ms(1_155_625), "1.155625ms");
+    }
 }

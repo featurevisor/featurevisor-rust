@@ -18,7 +18,7 @@ where
     Ok(Some(JsonValue::deserialize(deserializer)?))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Operator {
     Equals,
@@ -47,6 +47,45 @@ pub enum Operator {
     NotExists,
     Includes,
     NotIncludes,
+    Unknown,
+}
+
+impl<'de> Deserialize<'de> for Operator {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(match value.as_str() {
+            "equals" => Self::Equals,
+            "notEquals" => Self::NotEquals,
+            "before" => Self::Before,
+            "after" => Self::After,
+            "in" => Self::In,
+            "notIn" => Self::NotIn,
+            "contains" => Self::Contains,
+            "notContains" => Self::NotContains,
+            "startsWith" => Self::StartsWith,
+            "endsWith" => Self::EndsWith,
+            "semverEquals" => Self::SemverEquals,
+            "semverNotEquals" => Self::SemverNotEquals,
+            "semverGreaterThan" => Self::SemverGreaterThan,
+            "semverGreaterThanOrEquals" => Self::SemverGreaterThanOrEquals,
+            "semverLessThan" => Self::SemverLessThan,
+            "semverLessThanOrEquals" => Self::SemverLessThanOrEquals,
+            "matches" => Self::Matches,
+            "notMatches" => Self::NotMatches,
+            "greaterThan" => Self::GreaterThan,
+            "greaterThanOrEquals" => Self::GreaterThanOrEquals,
+            "lessThan" => Self::LessThan,
+            "lessThanOrEquals" => Self::LessThanOrEquals,
+            "exists" => Self::Exists,
+            "notExists" => Self::NotExists,
+            "includes" => Self::Includes,
+            "notIncludes" => Self::NotIncludes,
+            _ => Self::Unknown,
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

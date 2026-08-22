@@ -254,30 +254,6 @@ fn fixture_bucketing_numbers_regex_and_typed_values_are_executed() {
             expected.as_bool().unwrap()
         );
     }
-    for pattern in fixture["regularExpressions"]["rejectedSyntax"]
-        .as_array()
-        .unwrap()
-    {
-        let f = create_featurevisor(FeaturevisorOptions {
-            datafile: Some(DatafileInput::Content(feature(
-                json!("segment"),
-                json!({
-                    "attribute": "value",
-                    "operator": "matches",
-                    "value": pattern,
-                    "regexFlags": ""
-                }),
-            ))),
-            ..Default::default()
-        });
-        let context = [("value".to_string(), AttributeValue::from("foo"))]
-            .into_iter()
-            .collect();
-        assert!(
-            !f.is_enabled("feature", Some(&context)),
-            "pattern {pattern}"
-        );
-    }
     for flag in fixture["portableConditions"]["rejectedRegexFlags"]
         .as_array()
         .unwrap()

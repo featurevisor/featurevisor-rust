@@ -1,7 +1,8 @@
 use featurevisor::{
-    create_featurevisor, AttributeValue, Context, DatafileInput, FeaturevisorOptions,
+    create_featurevisor, AttributeValue, Context, DatafileInput, Diagnostic, FeaturevisorOptions,
 };
 use serde_json::json;
+use std::sync::{Arc, Mutex};
 
 fn condition_feature(
     segments: serde_json::Value,
@@ -26,6 +27,82 @@ fn context(values: &[(&str, AttributeValue)]) -> Context {
         .iter()
         .map(|(key, value)| ((*key).to_string(), value.clone()))
         .collect()
+}
+
+#[test]
+fn unknown_operator_is_false_without_a_parse_diagnostic() {
+    let diagnostics = Arc::new(Mutex::new(Vec::<Diagnostic>::new()));
+    let observed = Arc::clone(&diagnostics);
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(condition_feature(
+            json!("segment"),
+            json!({
+                "attribute": "country",
+                "operator": "futureOperator",
+                "value": "nl"
+            }),
+        ))),
+        on_diagnostic: Some(Arc::new(move |diagnostic| {
+            observed.lock().unwrap().push(diagnostic.clone());
+        })),
+        ..Default::default()
+    });
+    let context = context(&[("country", "nl".into())]);
+
+    assert!(!f.is_enabled("feature", Some(&context)));
+    assert!(diagnostics
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|diagnostic| diagnostic.code != "conditions_parse_error"));
+}
+
+#[test]
+fn runtime_accepts_host_regex_syntax_and_reports_real_compile_errors() {
+    for (pattern, value) in [
+        ("(?:chrome|firefox)", "chrome"),
+        ("[(?]", "?"),
+        (r"a\++", "a++"),
+    ] {
+        let f = create_featurevisor(FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(condition_feature(
+                json!("segment"),
+                json!({
+                    "attribute": "browser",
+                    "operator": "matches",
+                    "value": pattern
+                }),
+            ))),
+            ..Default::default()
+        });
+        let context = context(&[("browser", value.into())]);
+        assert!(f.is_enabled("feature", Some(&context)), "pattern {pattern}");
+    }
+
+    let diagnostics = Arc::new(Mutex::new(Vec::<Diagnostic>::new()));
+    let observed = Arc::clone(&diagnostics);
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(condition_feature(
+            json!("segment"),
+            json!({
+                "attribute": "browser",
+                "operator": "matches",
+                "value": "(?=chrome)"
+            }),
+        ))),
+        on_diagnostic: Some(Arc::new(move |diagnostic| {
+            observed.lock().unwrap().push(diagnostic.clone());
+        })),
+        ..Default::default()
+    });
+    let context = context(&[("browser", "chrome".into())]);
+
+    assert!(!f.is_enabled("feature", Some(&context)));
+    assert!(diagnostics
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic.code == "condition_match_error"));
 }
 
 #[test]

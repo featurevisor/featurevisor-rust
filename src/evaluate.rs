@@ -10,7 +10,6 @@ use crate::types::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
-use std::sync::OnceLock;
 use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,7 +129,6 @@ impl EvaluationData {
             format!("(?{prefix}){pattern}")
         };
         let regex = regex::Regex::new(&source).map_err(|error| error.to_string())?;
-        validate_portable_regex(pattern)?;
         if let Ok(mut cache) = self.regex_cache.write() {
             cache.insert(key, regex.clone());
         }
@@ -210,37 +208,6 @@ impl EvaluationData {
         }
         (None, None)
     }
-}
-
-fn validate_portable_regex(pattern: &str) -> Result<(), String> {
-    if pattern.contains("(?") {
-        return Err(
-            "regular expression must not use lookaround, named groups, noncapturing groups, atomic groups, or inline mode groups".to_string(),
-        );
-    }
-
-    static BACKREFERENCE_REGEX: OnceLock<regex::Regex> = OnceLock::new();
-    if BACKREFERENCE_REGEX
-        .get_or_init(|| {
-            regex::Regex::new(r"\\(?:[1-9]|k<|k'|g<|g')").expect("valid backreference regex")
-        })
-        .is_match(pattern)
-    {
-        return Err("regular expression must not use backreferences".to_string());
-    }
-
-    static POSSESSIVE_QUANTIFIER_REGEX: OnceLock<regex::Regex> = OnceLock::new();
-    if POSSESSIVE_QUANTIFIER_REGEX
-        .get_or_init(|| {
-            regex::Regex::new(r"(?:[?*+]|\{\d+(?:,\d*)?\})\+")
-                .expect("valid possessive quantifier regex")
-        })
-        .is_match(pattern)
-    {
-        return Err("regular expression must not use possessive quantifiers".to_string());
-    }
-
-    Ok(())
 }
 
 fn diag_for(evaluation: &Evaluation, level: LogLevel, code: &str, message: &str) -> Diagnostic {

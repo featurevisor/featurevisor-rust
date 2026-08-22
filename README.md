@@ -425,13 +425,18 @@ featurevisor benchmark --projectDirectoryPath=../featurevisor/examples/example-1
 ```
 
 Use either `--variation` or `--variable=<key>` when benchmarking. They cannot be
-used together.
+used together. The command reports minimum, average, maximum, and total
+durations in fractional milliseconds for the individual SDK evaluations.
 
 ### Assess distribution
 
 ```bash
 featurevisor assess-distribution --projectDirectoryPath=../featurevisor/examples/example-1 --feature=foo --n=100000
 ```
+
+The output includes separate flag and variation sections with counts and
+percentages. Pass `--target` more than once to assess multiple target
+datafiles.
 
 The legacy `--with-scopes`, `--with-tags`, `--schemaVersion`, and `--schema-version` options are accepted and ignored. Targets can be passed more than once.
 

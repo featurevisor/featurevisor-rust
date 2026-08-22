@@ -1,4 +1,5 @@
 FEATUREVISOR_PROJECT ?= ../featurevisor/examples/example-1
+FEATUREVISOR_REPO ?= https://github.com/featurevisor/featurevisor.git
 
 .PHONY: build test test-cli fmt lint check test-example-1 setup-monorepo update-monorepo
 
@@ -26,7 +27,7 @@ test-example-1:
 setup-monorepo:
 	mkdir -p monorepo
 	if [ ! -d "monorepo/.git" ]; then \
-		git clone ../featurevisor monorepo; \
+		git clone $(FEATUREVISOR_REPO) monorepo; \
 	else \
 		(cd monorepo && git fetch && git checkout main && git pull); \
 	fi
