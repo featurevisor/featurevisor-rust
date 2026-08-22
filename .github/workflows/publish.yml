@@ -15,22 +15,19 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/checkout@v7
-        with:
-          repository: featurevisor/featurevisor
-          ref: main
-          path: featurevisor
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v7
         with:
-          node-version-file: featurevisor/.nvmrc
-          cache: npm
-          cache-dependency-path: featurevisor/package-lock.json
-      - name: Build Featurevisor CLI
-        working-directory: featurevisor
+          node-version: 24
+          package-manager-cache: false
+      - name: Set up Featurevisor example-1 project
         run: |
-          npm ci
-          npm run build
+          mkdir example-1
+          cd example-1
+          npx --yes @featurevisor/cli@3 init --example=1
+          npm install
+          npx featurevisor build
+          npx featurevisor test --onlyFailures
       - name: Verify tag matches crate version
         shell: bash
         run: |
@@ -42,9 +39,7 @@ jobs:
           cargo clippy --all-features --all-targets -- -D warnings
           cargo test --all-features
       - name: Run example project through Rust SDK
-        run: cargo run --features cli --bin featurevisor -- test --projectDirectoryPath=featurevisor/examples/example-1 --onlyFailures
-      - name: Remove integration checkout
-        run: rm -rf featurevisor
+        run: cargo run --features cli --bin featurevisor -- test --projectDirectoryPath=./example-1 --onlyFailures
       - name: Verify package contents
         run: |
           cargo package --all-features
