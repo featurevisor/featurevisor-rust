@@ -195,7 +195,7 @@ fn condition_is_matched(
                 !matches
             }
         }
-        Operator::Unknown => false,
+        Operator::Unknown(_) => false,
     };
     Ok(result)
 }

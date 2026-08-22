@@ -1,14 +1,23 @@
+#![allow(missing_docs)]
+
 use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
+/// Evaluation attributes keyed by name.
 pub type Context = HashMap<String, AttributeValue>;
+/// Sticky evaluation results keyed by feature key.
 pub type StickyFeatures = HashMap<String, EvaluatedFeature>;
+/// Evaluation results keyed by feature key.
 pub type EvaluatedFeatures = HashMap<String, EvaluatedFeature>;
+/// A variation value.
 pub type VariationValue = String;
+/// A feature key.
 pub type FeatureKey = String;
+/// A segment key.
 pub type SegmentKey = String;
+/// A rule key.
 pub type RuleKey = String;
 
 fn deserialize_condition_value<'de, D>(deserializer: D) -> Result<Option<JsonValue>, D::Error>
@@ -18,8 +27,9 @@ where
     Ok(Some(JsonValue::deserialize(deserializer)?))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+/// An operator used to compare a context attribute.
 pub enum Operator {
     Equals,
     NotEquals,
@@ -47,7 +57,45 @@ pub enum Operator {
     NotExists,
     Includes,
     NotIncludes,
-    Unknown,
+    Unknown(String),
+}
+
+impl Serialize for Operator {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let value = match self {
+            Self::Equals => "equals",
+            Self::NotEquals => "notEquals",
+            Self::Before => "before",
+            Self::After => "after",
+            Self::In => "in",
+            Self::NotIn => "notIn",
+            Self::Contains => "contains",
+            Self::NotContains => "notContains",
+            Self::StartsWith => "startsWith",
+            Self::EndsWith => "endsWith",
+            Self::SemverEquals => "semverEquals",
+            Self::SemverNotEquals => "semverNotEquals",
+            Self::SemverGreaterThan => "semverGreaterThan",
+            Self::SemverGreaterThanOrEquals => "semverGreaterThanOrEquals",
+            Self::SemverLessThan => "semverLessThan",
+            Self::SemverLessThanOrEquals => "semverLessThanOrEquals",
+            Self::Matches => "matches",
+            Self::NotMatches => "notMatches",
+            Self::GreaterThan => "greaterThan",
+            Self::GreaterThanOrEquals => "greaterThanOrEquals",
+            Self::LessThan => "lessThan",
+            Self::LessThanOrEquals => "lessThanOrEquals",
+            Self::Exists => "exists",
+            Self::NotExists => "notExists",
+            Self::Includes => "includes",
+            Self::NotIncludes => "notIncludes",
+            Self::Unknown(value) => value,
+        };
+        serializer.serialize_str(value)
+    }
 }
 
 impl<'de> Deserialize<'de> for Operator {
@@ -83,12 +131,13 @@ impl<'de> Deserialize<'de> for Operator {
             "notExists" => Self::NotExists,
             "includes" => Self::Includes,
             "notIncludes" => Self::NotIncludes,
-            _ => Self::Unknown,
+            _ => Self::Unknown(value),
         })
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A plain attribute condition.
 pub struct PlainCondition {
     pub attribute: String,
     pub operator: Operator,
@@ -103,22 +152,26 @@ pub struct PlainCondition {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// An implicit AND group of conditions.
 pub struct AndCondition {
     pub and: Vec<Condition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// An OR group of conditions.
 pub struct OrCondition {
     pub or: Vec<Condition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A negated implicit AND group of conditions.
 pub struct NotCondition {
     pub not: Vec<Condition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+/// A condition expression accepted by Featurevisor datafiles.
 pub enum Condition {
     Plain(PlainCondition),
     And(AndCondition),
@@ -129,22 +182,26 @@ pub enum Condition {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// An implicit AND group of segment references.
 pub struct AndGroupSegment {
     pub and: Vec<GroupSegment>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// An OR group of segment references.
 pub struct OrGroupSegment {
     pub or: Vec<GroupSegment>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A negated implicit AND group of segment references.
 pub struct NotGroupSegment {
     pub not: Vec<GroupSegment>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+/// A segment expression used by a rule, force, or override.
 pub enum GroupSegment {
     Plain(String),
     And(AndGroupSegment),
@@ -154,6 +211,7 @@ pub enum GroupSegment {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+/// A JSON compatible Featurevisor variable value.
 pub enum VariableValue {
     String(String),
     Integer(i64),
@@ -165,6 +223,7 @@ pub enum VariableValue {
 }
 
 impl VariableValue {
+    /// Converts the value to JSON.
     pub fn to_json(&self) -> JsonValue {
         match self {
             Self::String(value) => JsonValue::String(value.clone()),
@@ -184,12 +243,14 @@ impl VariableValue {
         }
     }
 
+    /// Converts JSON to a variable value, using null for unsupported input.
     pub fn from_json(value: JsonValue) -> Self {
         serde_json::from_value(value).unwrap_or(Self::Null)
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
+/// A context attribute value, including dates and nested values.
 pub enum AttributeValue {
     String(String),
     Integer(i64),
@@ -202,6 +263,7 @@ pub enum AttributeValue {
 }
 
 impl AttributeValue {
+    /// Converts the attribute to JSON.
     pub fn to_json(&self) -> JsonValue {
         match self {
             Self::String(value) => JsonValue::String(value.clone()),
@@ -222,6 +284,7 @@ impl AttributeValue {
         }
     }
 
+    /// Converts JSON to an attribute value.
     pub fn from_json(value: JsonValue) -> Self {
         match value {
             JsonValue::Null => Self::Null,
@@ -358,6 +421,7 @@ impl From<f64> for VariableValue {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// The v2 datafile consumed by the SDK.
 pub struct DatafileContent {
     #[serde(rename = "schemaVersion")]
     pub schema_version: String,
@@ -384,6 +448,7 @@ impl Default for DatafileContent {
 }
 
 #[derive(Clone, Debug)]
+/// A datafile supplied as decoded content or a JSON string.
 pub enum DatafileInput {
     Content(DatafileContent),
     Json(String),
@@ -391,6 +456,7 @@ pub enum DatafileInput {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+/// A feature bucketing key definition.
 pub enum BucketBy {
     Plain(String),
     And(Vec<String>),
@@ -406,12 +472,14 @@ impl Default for BucketBy {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+/// A feature dependency requirement.
 pub enum Required {
     Feature(String),
     Variation { key: String, variation: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A resolved variable schema from a feature definition.
 pub struct ResolvedVariableSchema {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub deprecated: Option<bool>,
@@ -447,6 +515,7 @@ impl Default for ResolvedVariableSchema {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A conditional variable override.
 pub struct VariableOverride {
     pub value: VariableValue,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -456,6 +525,7 @@ pub struct VariableOverride {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A feature variation and its optional variable values.
 pub struct Variation {
     pub value: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -465,12 +535,14 @@ pub struct Variation {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A variation allocation range.
 pub struct Allocation {
     pub variation: String,
     pub range: [f64; 2],
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A feature traffic rule.
 pub struct Traffic {
     pub key: String,
     pub segments: JsonValue,
@@ -490,6 +562,7 @@ pub struct Traffic {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A force rule that overrides normal traffic evaluation.
 pub struct Force {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub conditions: Option<JsonValue>,
@@ -504,6 +577,7 @@ pub struct Force {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+/// A feature definition from a datafile.
 pub struct Feature {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
@@ -532,6 +606,7 @@ pub struct Feature {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A segment definition from a datafile.
 pub struct Segment {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
@@ -541,6 +616,7 @@ pub struct Segment {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// The compact result stored for sticky evaluations.
 pub struct EvaluatedFeature {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

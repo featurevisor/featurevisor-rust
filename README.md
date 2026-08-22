@@ -297,6 +297,12 @@ let f = create_featurevisor(FeaturevisorOptions {
 });
 ```
 
+Regular expression conditions use Rust's `regex` crate and therefore support
+Featurevisor's portable regular expression subset. Lookaround and
+backreferences cannot be evaluated by this engine. They produce a
+`condition_match_error` diagnostic instead of being evaluated, so lint the
+project before shipping its datafiles.
+
 Module diagnostics can be subscribed to through `ModuleApi`. Diagnostic details are always an object, and error diagnostics also emit the `error` event.
 
 ## Events

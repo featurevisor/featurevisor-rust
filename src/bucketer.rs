@@ -3,6 +3,7 @@ use crate::helpers::{attribute_to_bucket_string, context_value};
 use crate::murmurhash::murmur_hash_v3;
 use crate::types::{BucketBy, Context};
 
+/// The inclusive upper bound of Featurevisor bucket values.
 pub const MAX_BUCKETED_NUMBER: u32 = 100_000;
 
 pub(crate) fn get_bucketed_number(bucket_key: &str) -> u32 {

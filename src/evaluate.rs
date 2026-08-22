@@ -14,36 +14,62 @@ use std::sync::{Arc, RwLock};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+/// The kind of value requested from a feature evaluation.
 pub enum EvaluationType {
+    /// Evaluate whether the feature is enabled.
     Flag,
+    /// Evaluate the feature's variation.
     Variation,
+    /// Evaluate one variable from the feature.
     Variable,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+/// The reason recorded for an evaluation result.
 pub enum EvaluationReason {
+    /// The requested feature was not found.
     FeatureNotFound,
+    /// The feature or selected rule is disabled.
     Disabled,
+    /// A required feature or variation was not satisfied.
     Required,
+    /// The evaluation was outside the configured traffic range.
     OutOfRange,
+    /// The feature has no variations.
     NoVariations,
+    /// The selected variation is disabled.
     VariationDisabled,
+    /// The requested variable was not found.
     VariableNotFound,
+    /// The variable default value was used.
     VariableDefault,
+    /// The variable was disabled.
     VariableDisabled,
+    /// The value came from a variation override.
     VariableOverrideVariation,
+    /// The value came from a rule override.
     VariableOverrideRule,
+    /// No rule matched the context.
     NoMatch,
+    /// A force definition supplied the result.
     Forced,
+    /// A sticky evaluation supplied the result.
     Sticky,
+    /// A rule supplied the result.
     Rule,
+    /// An allocation supplied the result.
     Allocated,
+    /// An evaluation error prevented a normal result.
     Error,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+/// Detailed result information for a flag, variation, or variable evaluation.
+#[allow(missing_docs)]
 pub struct Evaluation {
     #[serde(rename = "type")]
     pub evaluation_type: EvaluationType,
@@ -84,6 +110,8 @@ pub struct Evaluation {
 }
 
 #[derive(Clone)]
+/// Options passed through the module evaluation lifecycle.
+#[allow(missing_docs)]
 pub struct EvaluateOptions {
     pub evaluation_type: EvaluationType,
     pub feature_key: String,

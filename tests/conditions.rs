@@ -31,6 +31,17 @@ fn context(values: &[(&str, AttributeValue)]) -> Context {
 
 #[test]
 fn unknown_operator_is_false_without_a_parse_diagnostic() {
+    let condition: featurevisor::PlainCondition = serde_json::from_value(json!({
+        "attribute": "country",
+        "operator": "futureOperator",
+        "value": "nl"
+    }))
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(&condition).unwrap()["operator"],
+        "futureOperator"
+    );
+
     let diagnostics = Arc::new(Mutex::new(Vec::<Diagnostic>::new()));
     let observed = Arc::clone(&diagnostics);
     let f = create_featurevisor(FeaturevisorOptions {

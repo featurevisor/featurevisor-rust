@@ -15,6 +15,7 @@ struct ChildInner {
 }
 
 #[derive(Clone)]
+/// A child evaluator that inherits datafile and modules from a parent instance.
 pub struct FeaturevisorChild {
     parent: Featurevisor,
     inner: Arc<Mutex<ChildInner>>,
@@ -41,6 +42,7 @@ impl FeaturevisorChild {
             .unwrap_or_default()
     }
 
+    /// Updates the child context, either merging with or replacing its stored context.
     pub fn set_context(&self, context: Context, replace: bool) {
         let (context, emitter) = {
             let mut inner = match self.inner.lock() {
@@ -65,6 +67,7 @@ impl FeaturevisorChild {
             }),
         );
     }
+    /// Returns the child context merged with an optional per evaluation context.
     pub fn get_context(&self, context: Option<&Context>) -> Context {
         let (stored, _) = self.options();
         let mut merged = stored;
@@ -73,6 +76,7 @@ impl FeaturevisorChild {
         }
         self.parent.get_context(Some(&merged))
     }
+    /// Updates sticky evaluations used by this child.
     pub fn set_sticky(&self, sticky: StickyFeatures, replace: bool) {
         let (features, emitter) = {
             let mut inner = match self.inner.lock() {
@@ -101,6 +105,7 @@ impl FeaturevisorChild {
         );
     }
 
+    /// Subscribes to child events and returns an idempotent cleanup function.
     pub fn on(&self, event: EventName, callback: EventHandler) -> Unsubscribe {
         if matches!(event, EventName::ContextSet | EventName::StickySet) {
             return self
@@ -137,6 +142,7 @@ impl FeaturevisorChild {
         })
     }
 
+    /// Closes the child and removes its event subscriptions.
     pub fn close(&self) {
         let unsubscribers = {
             let mut inner = match self.inner.lock() {
@@ -177,12 +183,15 @@ impl FeaturevisorChild {
             sticky,
         )
     }
+    /// Evaluates a feature as a flag and returns evaluation details.
     pub fn evaluate_flag(&self, feature_key: &str, context: Option<&Context>) -> Evaluation {
         self.evaluate(EvaluationType::Flag, feature_key, None, context, None)
     }
+    /// Returns whether a feature is enabled for the supplied context.
     pub fn is_enabled(&self, feature_key: &str, context: Option<&Context>) -> bool {
         self.evaluate_flag(feature_key, context).enabled == Some(true)
     }
+    /// Evaluates a feature variation and returns evaluation details.
     pub fn evaluate_variation(
         &self,
         feature_key: &str,
@@ -197,6 +206,7 @@ impl FeaturevisorChild {
             options,
         )
     }
+    /// Returns the selected variation value, if one is available.
     pub fn get_variation(
         &self,
         feature_key: &str,
@@ -208,6 +218,7 @@ impl FeaturevisorChild {
             .variation_value
             .or_else(|| evaluation.variation.map(|variation| variation.value))
     }
+    /// Evaluates a feature variable and returns evaluation details.
     pub fn evaluate_variable(
         &self,
         feature_key: &str,
@@ -223,6 +234,7 @@ impl FeaturevisorChild {
             options,
         )
     }
+    /// Returns a feature variable value, if one is available.
     pub fn get_variable(
         &self,
         feature_key: &str,
@@ -238,6 +250,7 @@ impl FeaturevisorChild {
             self.options().1,
         )
     }
+    /// Returns a variable as a boolean when its value has that type.
     pub fn get_variable_boolean(
         &self,
         feature_key: &str,
@@ -250,6 +263,7 @@ impl FeaturevisorChild {
             _ => None,
         }
     }
+    /// Returns a variable as a string when its value has that type.
     pub fn get_variable_string(
         &self,
         feature_key: &str,
@@ -262,6 +276,7 @@ impl FeaturevisorChild {
             _ => None,
         }
     }
+    /// Returns a variable as an integer when its value has that type.
     pub fn get_variable_integer(
         &self,
         feature_key: &str,
@@ -277,6 +292,7 @@ impl FeaturevisorChild {
             _ => None,
         }
     }
+    /// Returns a variable as a double when its value has that type.
     pub fn get_variable_double(
         &self,
         feature_key: &str,
@@ -290,6 +306,7 @@ impl FeaturevisorChild {
             _ => None,
         }
     }
+    /// Returns a variable as an array when its value has that type.
     pub fn get_variable_array(
         &self,
         feature_key: &str,
@@ -302,6 +319,7 @@ impl FeaturevisorChild {
             _ => None,
         }
     }
+    /// Returns a variable as an object when its value has that type.
     pub fn get_variable_object(
         &self,
         feature_key: &str,
@@ -314,6 +332,7 @@ impl FeaturevisorChild {
             _ => None,
         }
     }
+    /// Returns a variable value without imposing a more specific Rust type.
     pub fn get_variable_json(
         &self,
         feature_key: &str,
@@ -323,6 +342,7 @@ impl FeaturevisorChild {
     ) -> Option<VariableValue> {
         self.get_variable(feature_key, variable_key, context, options)
     }
+    /// Evaluates all requested features, or every feature when no keys are supplied.
     pub fn get_all_evaluations(
         &self,
         context: Option<&Context>,

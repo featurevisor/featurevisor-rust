@@ -4,15 +4,23 @@ use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+/// Events emitted by a Featurevisor instance.
 pub enum EventName {
+    /// A datafile was merged or replaced.
     DatafileSet,
+    /// Stored context was merged or replaced.
     ContextSet,
+    /// Sticky evaluations were merged or replaced.
     StickySet,
+    /// An error diagnostic was emitted.
     Error,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Details emitted with a datafile update event.
+#[allow(missing_docs)]
 pub struct DatafileSetDetails {
     pub revision: String,
     pub previous_revision: String,
@@ -23,6 +31,8 @@ pub struct DatafileSetDetails {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Details emitted with a context update event.
+#[allow(missing_docs)]
 pub struct ContextSetDetails {
     pub context: Context,
     pub replaced: bool,
@@ -30,6 +40,8 @@ pub struct ContextSetDetails {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+/// Details emitted with a sticky evaluation update event.
+#[allow(missing_docs)]
 pub struct StickySetDetails {
     pub features: Vec<String>,
     pub replaced: bool,
@@ -37,11 +49,21 @@ pub struct StickySetDetails {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[non_exhaustive]
+/// Event payloads emitted by the SDK.
 pub enum EventDetails {
+    /// Details for a datafile update.
     DatafileSet(DatafileSetDetails),
+    /// Details for a context update.
     ContextSet(ContextSetDetails),
+    /// Details for a sticky evaluation update.
     StickySet(StickySetDetails),
-    Error { diagnostic: Diagnostic },
+    /// Details for an error diagnostic.
+    Error {
+        /// The diagnostic that caused the event.
+        diagnostic: Diagnostic,
+    },
 }
 
+/// A thread safe callback that receives instance events.
 pub type EventHandler = std::sync::Arc<dyn Fn(&EventDetails) + Send + Sync>;

@@ -23,17 +23,23 @@ use std::sync::{Arc, Mutex, RwLock};
 const EMPTY_REVISION: &str = "unknown";
 
 #[derive(Clone, Debug, Default)]
+/// Options that override defaults for a variation or variable evaluation.
+#[allow(missing_docs)]
 pub struct OverrideOptions {
     pub default_variation_value: Option<String>,
     pub default_variable_value: Option<VariableValue>,
 }
 
 #[derive(Clone, Debug, Default)]
+/// Options used when creating a child evaluator.
+#[allow(missing_docs)]
 pub struct SpawnOptions {
     pub sticky: Option<StickyFeatures>,
 }
 
 #[derive(Default)]
+/// Configuration for a [`Featurevisor`] instance.
+#[allow(missing_docs)]
 pub struct FeaturevisorOptions {
     pub datafile: Option<DatafileInput>,
     pub context: Option<Context>,
@@ -73,11 +79,13 @@ type Snapshot = (
 );
 
 #[derive(Clone)]
+/// A thread safe Featurevisor v3 datafile evaluator.
 pub struct Featurevisor {
     inner: Arc<Mutex<Inner>>,
     next_subscription_id: Arc<AtomicU64>,
 }
 
+/// Creates a Featurevisor evaluator from the supplied options.
 pub fn create_featurevisor(options: FeaturevisorOptions) -> Featurevisor {
     let instance = Featurevisor {
         inner: Arc::new(Mutex::new(Inner {
@@ -110,7 +118,7 @@ pub fn create_featurevisor(options: FeaturevisorOptions) -> Featurevisor {
 
 impl Featurevisor {
     fn snapshot(&self) -> Snapshot {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|error| error.into_inner());
         (
             Arc::clone(&inner.datafile),
             inner.context.clone(),
@@ -218,6 +226,7 @@ impl Featurevisor {
         }
     }
 
+    /// Sets the minimum diagnostic level delivered to the instance handler.
     pub fn set_log_level(&self, level: LogLevel) {
         if let Ok(mut inner) = self.inner.lock() {
             if !inner.closed {
@@ -226,6 +235,7 @@ impl Featurevisor {
         }
     }
 
+    /// Merges a datafile into the current one, or replaces it when `replace` is true.
     pub fn set_datafile(&self, input: DatafileInput, replace: bool) {
         let parsed = match input {
             DatafileInput::Content(content) => Some(content),
@@ -283,24 +293,28 @@ impl Featurevisor {
         emitter.emit(EventName::DatafileSet, EventDetails::DatafileSet(details));
     }
 
+    /// Returns the current datafile revision.
     pub fn get_revision(&self) -> String {
         self.inner
             .lock()
             .map(|inner| inner.datafile.revision.clone())
             .unwrap_or_else(|_| EMPTY_REVISION.to_string())
     }
+    /// Returns the current datafile schema version.
     pub fn get_schema_version(&self) -> String {
         self.inner
             .lock()
             .map(|inner| inner.datafile.schema_version.clone())
             .unwrap_or_else(|_| "2".to_string())
     }
+    /// Returns a feature definition by key.
     pub fn get_feature(&self, feature_key: &str) -> Option<Feature> {
         self.inner
             .lock()
             .ok()
             .and_then(|inner| inner.datafile.features.get(feature_key).cloned())
     }
+    /// Returns a segment definition by key.
     pub fn get_segment(&self, segment_key: &str) -> Option<Segment> {
         let mut segment = self
             .inner
@@ -316,12 +330,14 @@ impl Featurevisor {
         }
         Some(segment)
     }
+    /// Returns the keys of all features in the current datafile.
     pub fn get_feature_keys(&self) -> Vec<String> {
         self.inner
             .lock()
             .map(|inner| inner.datafile.features.keys().cloned().collect())
             .unwrap_or_default()
     }
+    /// Returns the variable keys defined for a feature.
     pub fn get_variable_keys(&self, feature_key: &str) -> Vec<String> {
         self.get_feature(feature_key)
             .and_then(|feature| {
@@ -331,6 +347,7 @@ impl Featurevisor {
             })
             .unwrap_or_default()
     }
+    /// Returns whether a feature defines at least one variation.
     pub fn has_variations(&self, feature_key: &str) -> bool {
         self.get_feature(feature_key)
             .and_then(|feature| feature.variations.map(|variations| !variations.is_empty()))
@@ -352,6 +369,7 @@ impl Featurevisor {
         )
     }
 
+    /// Updates the stored context, either merging with or replacing it.
     pub fn set_context(&self, context: Context, replace: bool) {
         let (context, emitter) = {
             let mut inner = match self.inner.lock() {
@@ -394,6 +412,7 @@ impl Featurevisor {
         self.report_diagnostic(diagnostic, None);
     }
 
+    /// Returns the stored context merged with an optional per evaluation context.
     pub fn get_context(&self, context: Option<&Context>) -> Context {
         let (_, stored, _, _, _, _) = self.snapshot();
         let mut result = stored;
@@ -402,6 +421,7 @@ impl Featurevisor {
         }
         result
     }
+    /// Updates sticky evaluations, either merging with or replacing them.
     pub fn set_sticky(&self, sticky: StickyFeatures, replace: bool) {
         let (features, emitter) = {
             let mut inner = match self.inner.lock() {
@@ -438,6 +458,7 @@ impl Featurevisor {
         emitter.emit(EventName::StickySet, EventDetails::StickySet(details));
     }
 
+    /// Registers a module and returns an idempotent cleanup function.
     pub fn add_module(&self, module: Arc<dyn FeaturevisorModule>) -> Option<crate::Unsubscribe> {
         let (id, name) = {
             let mut inner = self.inner.lock().ok()?;
@@ -509,6 +530,7 @@ impl Featurevisor {
             self.close_module(module, name);
         }
     }
+    /// Removes and closes all modules with the supplied name.
     pub fn remove_module(&self, name: &str) {
         let modules = self
             .inner
@@ -543,6 +565,7 @@ impl Featurevisor {
         }
     }
 
+    /// Subscribes to an instance event and returns an idempotent cleanup function.
     pub fn on(&self, event: EventName, callback: EventHandler) -> crate::Unsubscribe {
         self.inner
             .lock()
@@ -594,6 +617,7 @@ impl Featurevisor {
         options.variable_key = Some(variable_key.to_string());
         options
     }
+    /// Evaluates a feature as a flag and returns evaluation details.
     pub fn evaluate_flag(&self, feature_key: &str, context: Option<&Context>) -> Evaluation {
         evaluate_with_modules(self.evaluate_options(
             EvaluationType::Flag,
@@ -602,9 +626,11 @@ impl Featurevisor {
             None,
         ))
     }
+    /// Returns whether a feature is enabled for the supplied context.
     pub fn is_enabled(&self, feature_key: &str, context: Option<&Context>) -> bool {
         self.evaluate_flag(feature_key, context).enabled == Some(true)
     }
+    /// Evaluates a feature variation and returns evaluation details.
     pub fn evaluate_variation(
         &self,
         feature_key: &str,
@@ -618,6 +644,7 @@ impl Featurevisor {
             options,
         ))
     }
+    /// Returns the selected variation value, if one is available.
     pub fn get_variation(
         &self,
         feature_key: &str,
@@ -629,6 +656,7 @@ impl Featurevisor {
             .variation_value
             .or_else(|| evaluation.variation.map(|variation| variation.value))
     }
+    /// Evaluates a feature variable and returns evaluation details.
     pub fn evaluate_variable(
         &self,
         feature_key: &str,
@@ -643,6 +671,7 @@ impl Featurevisor {
             options,
         ))
     }
+    /// Returns a feature variable value, if one is available.
     pub fn get_variable(
         &self,
         feature_key: &str,
@@ -666,6 +695,7 @@ impl Featurevisor {
         }
         Some(value)
     }
+    /// Returns a variable as a boolean when its value has that type.
     pub fn get_variable_boolean(
         &self,
         feature_key: &str,
@@ -678,6 +708,7 @@ impl Featurevisor {
             _ => None,
         }
     }
+    /// Returns a variable as a string when its value has that type.
     pub fn get_variable_string(
         &self,
         feature_key: &str,
@@ -690,6 +721,7 @@ impl Featurevisor {
             _ => None,
         }
     }
+    /// Returns a variable as an integer when its value has that type.
     pub fn get_variable_integer(
         &self,
         feature_key: &str,
@@ -705,6 +737,7 @@ impl Featurevisor {
             _ => None,
         }
     }
+    /// Returns a variable as a double when its value has that type.
     pub fn get_variable_double(
         &self,
         feature_key: &str,
@@ -718,6 +751,7 @@ impl Featurevisor {
             _ => None,
         }
     }
+    /// Returns a variable as an array when its value has that type.
     pub fn get_variable_array(
         &self,
         feature_key: &str,
@@ -730,6 +764,7 @@ impl Featurevisor {
             _ => None,
         }
     }
+    /// Returns a variable as an object when its value has that type.
     pub fn get_variable_object(
         &self,
         feature_key: &str,
@@ -742,6 +777,7 @@ impl Featurevisor {
             _ => None,
         }
     }
+    /// Returns a variable value without imposing a more specific Rust type.
     pub fn get_variable_json(
         &self,
         feature_key: &str,
@@ -751,6 +787,7 @@ impl Featurevisor {
     ) -> Option<VariableValue> {
         self.get_variable(feature_key, variable_key, context, options)
     }
+    /// Evaluates all requested features, or every feature when no keys are supplied.
     pub fn get_all_evaluations(
         &self,
         context: Option<&Context>,
@@ -765,6 +802,7 @@ impl Featurevisor {
         };
         evaluate_all(&eval_options, &keys)
     }
+    /// Creates a child evaluator with its own context and sticky state.
     pub fn spawn(&self, context: Context, options: SpawnOptions) -> FeaturevisorChild {
         FeaturevisorChild::new(
             self.clone(),
@@ -772,6 +810,7 @@ impl Featurevisor {
             options.sticky.unwrap_or_default(),
         )
     }
+    /// Closes the instance, modules, subscriptions, and event listeners.
     pub fn close(&self) {
         let modules = {
             let mut inner = match self.inner.lock() {
