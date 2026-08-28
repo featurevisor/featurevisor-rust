@@ -54,8 +54,8 @@ pub struct TestOptions {
 pub struct BenchmarkOptions {
     #[command(flatten)]
     pub common: CommonOptions,
-    #[arg(long)]
-    pub feature: String,
+    #[arg(long, required_unless_present = "variable")]
+    pub feature: Option<String>,
     #[arg(long, action = clap::ArgAction::SetTrue, conflicts_with = "variable")]
     pub variation: bool,
     #[arg(long, conflicts_with = "variation")]

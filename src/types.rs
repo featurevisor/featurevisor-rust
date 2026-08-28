@@ -9,6 +9,10 @@ use std::collections::HashMap;
 pub type Context = HashMap<String, AttributeValue>;
 /// Sticky evaluation results keyed by feature key.
 pub type StickyFeatures = HashMap<String, EvaluatedFeature>;
+/// Sticky global variable values keyed by variable key.
+pub type StickyVariables = HashMap<String, VariableValue>;
+/// Global variable evaluation results keyed by variable key.
+pub type EvaluatedVariables = HashMap<String, VariableValue>;
 /// Evaluation results keyed by feature key.
 pub type EvaluatedFeatures = HashMap<String, EvaluatedFeature>;
 /// A variation value.
@@ -433,6 +437,8 @@ pub struct DatafileContent {
     pub featurevisor_version: Option<String>,
     pub segments: HashMap<String, Segment>,
     pub features: HashMap<String, Feature>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub variables: HashMap<String, GlobalVariable>,
 }
 
 impl Default for DatafileContent {
@@ -443,6 +449,7 @@ impl Default for DatafileContent {
             featurevisor_version: None,
             segments: HashMap::new(),
             features: HashMap::new(),
+            variables: HashMap::new(),
         }
     }
 }
@@ -475,7 +482,17 @@ impl Default for BucketBy {
 /// A feature dependency requirement.
 pub enum Required {
     Feature(String),
-    Variation { key: String, variation: String },
+    Details {
+        feature: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        enabled: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        variation: Option<String>,
+    },
+    LegacyVariation {
+        key: String,
+        variation: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -519,9 +536,39 @@ impl Default for ResolvedVariableSchema {
 pub struct VariableOverride {
     pub value: VariableValue,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "keyPath")]
+    pub key_path: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub conditions: Option<JsonValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub segments: Option<JsonValue>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "requiredFeatures")]
+    pub required_features: Option<Vec<Required>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// A global variable definition from a datafile.
+pub struct GlobalVariable {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    #[serde(rename = "type")]
+    pub variable_type: String,
+    #[serde(rename = "defaultValue", skip_serializing_if = "Option::is_none")]
+    pub default_value: Option<VariableValue>,
+    #[serde(rename = "disabledValue", skip_serializing_if = "Option::is_none")]
+    pub disabled_value: Option<VariableValue>,
+    #[serde(
+        rename = "useDefaultWhenDisabled",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub use_default_when_disabled: Option<bool>,
+    #[serde(rename = "requiredFeatures", skip_serializing_if = "Option::is_none")]
+    pub required_features: Option<Vec<Required>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<VariableOverride>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deprecated: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -587,6 +634,8 @@ pub struct Feature {
     pub deprecated: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<Required>>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "requiredFeatures")]
+    pub required_features: Option<Vec<Required>>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "variablesSchema")]
     pub variables_schema: Option<HashMap<String, ResolvedVariableSchema>>,
     #[serde(

@@ -64,14 +64,16 @@ fn condition_feature(condition: Value) -> featurevisor::DatafileContent {
 }
 
 #[test]
-fn fixture_is_version_two_and_every_section_is_present() {
+fn fixture_is_version_five_and_every_section_is_present() {
     let fixture: Value = serde_json::from_str(include_str!("../conformance/sdk-v3.json")).unwrap();
-    assert_eq!(fixture["version"], 2);
+    assert_eq!(fixture["version"], 5);
     for section in [
         "bucketing",
         "regularExpressions",
         "typedVariables",
         "datafile",
+        "globalVariables",
+        "requiredFeatures",
         "diagnostics",
         "numericBucketKeys",
         "portableConditions",
@@ -105,6 +107,205 @@ fn fixture_is_version_two_and_every_section_is_present() {
             case["name"]
         );
     }
+}
+
+#[test]
+fn global_variables_and_required_features_match_the_canonical_fixture() {
+    let fixture: Value = serde_json::from_str(include_str!("../conformance/sdk-v3.json")).unwrap();
+    let global = &fixture["globalVariables"];
+    for case in global["cases"].as_array().unwrap() {
+        let mut options = FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(
+                serde_json::from_value(global["datafile"].clone()).unwrap(),
+            )),
+            ..Default::default()
+        };
+        if let Some(sticky) = case.get("stickyVariables") {
+            options.sticky_variables = Some(serde_json::from_value(sticky.clone()).unwrap());
+        }
+        let f = create_featurevisor(options);
+        let context: Context = case
+            .get("context")
+            .and_then(Value::as_object)
+            .map(|values| {
+                values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), AttributeValue::from_json(value.clone())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let override_options = featurevisor::OverrideOptions {
+            default_variable_value: case
+                .get("defaultVariableValue")
+                .cloned()
+                .map(featurevisor::VariableValue::from_json),
+            ..Default::default()
+        };
+        let evaluation = f.evaluate_global_variable(
+            case["key"].as_str().unwrap(),
+            Some(&context),
+            Some(&override_options),
+        );
+        assert_eq!(
+            serde_json::to_value(&evaluation.reason).unwrap(),
+            case["expectedReason"],
+            "{}",
+            case["name"]
+        );
+        if let Some(expected) = case.get("expectedValue") {
+            assert_eq!(
+                evaluation
+                    .variable_value
+                    .as_ref()
+                    .map(|value| value.to_json()),
+                Some(expected.clone()),
+                "{}",
+                case["name"]
+            );
+        } else {
+            assert!(evaluation.variable_value.is_none(), "{}", case["name"]);
+        }
+        assert_eq!(
+            evaluation
+                .variable_override_index
+                .map(|value| Value::from(value as u64))
+                .as_ref(),
+            case.get("expectedOverrideIndex"),
+            "{}",
+            case["name"]
+        );
+        assert_eq!(
+            evaluation.variable_override_key.as_deref(),
+            case.get("expectedOverrideKey").and_then(Value::as_str),
+            "{}",
+            case["name"]
+        );
+        if let Some(expected) = case.get("expectedOverridePath") {
+            assert_eq!(
+                serde_json::to_value(&evaluation.variable_override_path).unwrap(),
+                *expected,
+                "{}",
+                case["name"]
+            );
+        }
+    }
+
+    let required = &fixture["requiredFeatures"];
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(
+            serde_json::from_value(required["datafile"].clone()).unwrap(),
+        )),
+        ..Default::default()
+    });
+    for case in required["cases"].as_array().unwrap() {
+        assert_eq!(
+            f.is_enabled(case["feature"].as_str().unwrap(), None),
+            case["expectedEnabled"].as_bool().unwrap(),
+            "{}",
+            case["name"]
+        );
+    }
+    let variable_case = &required["featureVariableCase"];
+    assert!(f.is_enabled("enabledFeature", None));
+    let evaluation = f.evaluate_variable(
+        variable_case["feature"].as_str().unwrap(),
+        variable_case["variable"].as_str().unwrap(),
+        None,
+        None,
+    );
+    assert_eq!(
+        evaluation.variable_value.map(|value| value.to_json()),
+        Some(variable_case["expectedValue"].clone())
+    );
+    assert_eq!(
+        evaluation.variable_override_key.as_deref(),
+        variable_case["expectedOverrideKey"].as_str()
+    );
+}
+
+#[test]
+fn global_variable_datafile_events_include_direct_and_dependency_changes() {
+    let fixture: Value = serde_json::from_str(include_str!("../conformance/sdk-v3.json")).unwrap();
+    for (case_key, expected_key, replace) in [
+        ("merge", "expectedAfterMerge", false),
+        ("replacement", "expectedAfterReplacement", true),
+    ] {
+        let update = &fixture["globalVariables"]["datafileUpdateCase"];
+        let f = create_featurevisor(FeaturevisorOptions {
+            datafile: Some(DatafileInput::Content(
+                serde_json::from_value(update["initial"].clone()).unwrap(),
+            )),
+            ..Default::default()
+        });
+        if replace {
+            f.set_datafile(
+                DatafileInput::Content(serde_json::from_value(update["merge"].clone()).unwrap()),
+                false,
+            );
+        }
+        let observed = Arc::new(Mutex::new(None));
+        let copy = Arc::clone(&observed);
+        let _unsubscribe = f.on(
+            EventName::DatafileSet,
+            Arc::new(move |event| {
+                if let EventDetails::DatafileSet(details) = event {
+                    *copy.lock().unwrap() = Some(details.clone());
+                }
+            }),
+        );
+        f.set_datafile(
+            DatafileInput::Content(serde_json::from_value(update[case_key].clone()).unwrap()),
+            replace,
+        );
+        let details = observed.lock().unwrap().clone().unwrap();
+        let mut features = details.features;
+        let mut variables = details.variables;
+        features.sort();
+        variables.sort();
+        let mut expected_features: Vec<String> =
+            serde_json::from_value(update[expected_key]["changedFeatures"].clone()).unwrap();
+        let mut expected_variables: Vec<String> =
+            serde_json::from_value(update[expected_key]["changedVariables"].clone()).unwrap();
+        expected_features.sort();
+        expected_variables.sort();
+        assert_eq!(features, expected_features, "{case_key}");
+        assert_eq!(variables, expected_variables, "{case_key}");
+    }
+
+    let dependency = &fixture["globalVariables"]["dependencyUpdateCase"];
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(
+            serde_json::from_value(dependency["initial"].clone()).unwrap(),
+        )),
+        ..Default::default()
+    });
+    let observed = Arc::new(Mutex::new(None));
+    let copy = Arc::clone(&observed);
+    let _unsubscribe = f.on(
+        EventName::DatafileSet,
+        Arc::new(move |event| {
+            if let EventDetails::DatafileSet(details) = event {
+                *copy.lock().unwrap() = Some(details.clone());
+            }
+        }),
+    );
+    f.set_datafile(
+        DatafileInput::Content(serde_json::from_value(dependency["updated"].clone()).unwrap()),
+        true,
+    );
+    let details = observed.lock().unwrap().clone().unwrap();
+    let mut features = details.features;
+    features.sort();
+    let mut variables = details.variables;
+    variables.sort();
+    let mut expected_features: Vec<String> =
+        serde_json::from_value(dependency["expectedChangedFeatures"].clone()).unwrap();
+    expected_features.sort();
+    let mut expected_variables: Vec<String> =
+        serde_json::from_value(dependency["expectedChangedVariables"].clone()).unwrap();
+    expected_variables.sort();
+    assert_eq!(features, expected_features);
+    assert_eq!(variables, expected_variables);
 }
 
 #[test]

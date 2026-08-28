@@ -13,6 +13,8 @@ pub enum EventName {
     ContextSet,
     /// Sticky evaluations were merged or replaced.
     StickySet,
+    /// Sticky global variables were merged or replaced.
+    StickyVariablesSet,
     /// An error diagnostic was emitted.
     Error,
 }
@@ -26,6 +28,7 @@ pub struct DatafileSetDetails {
     pub previous_revision: String,
     pub revision_changed: bool,
     pub features: Vec<String>,
+    pub variables: Vec<String>,
     pub replaced: bool,
 }
 
@@ -47,6 +50,16 @@ pub struct StickySetDetails {
     pub replaced: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+/// Details emitted with a sticky global variable update event.
+pub struct StickyVariablesSetDetails {
+    /// Global variable keys affected by the update.
+    pub variables: Vec<String>,
+    /// Whether the previous sticky variable map was replaced.
+    pub replaced: bool,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 #[non_exhaustive]
@@ -58,6 +71,8 @@ pub enum EventDetails {
     ContextSet(ContextSetDetails),
     /// Details for a sticky evaluation update.
     StickySet(StickySetDetails),
+    /// Details for a sticky global variable update.
+    StickyVariablesSet(StickyVariablesSetDetails),
     /// Details for an error diagnostic.
     Error {
         /// The diagnostic that caused the event.

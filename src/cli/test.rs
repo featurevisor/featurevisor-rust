@@ -306,8 +306,11 @@ fn compare_children(
         let child_sdk = sdk.spawn(
             child_context,
             SpawnOptions {
-                sticky: assertion
+                sticky_features: child
                     .get("sticky")
+                    .and_then(|value| serde_json::from_value(value.clone()).ok()),
+                sticky_variables: child
+                    .get("stickyVariables")
                     .and_then(|value| serde_json::from_value(value.clone()).ok()),
             },
         );
@@ -346,6 +349,7 @@ fn run_assertion(
 ) -> Result<Vec<String>, String> {
     let feature_key = test.get("feature").and_then(JsonValue::as_str);
     let segment_key = test.get("segment").and_then(JsonValue::as_str);
+    let variable_key = test.get("variable").and_then(JsonValue::as_str);
     let environment = assertion.get("environment").and_then(JsonValue::as_str);
     let target = assertion.get("target").and_then(JsonValue::as_str);
 
@@ -388,8 +392,59 @@ fn run_assertion(
         };
     }
 
+    if let Some(variable_key) = variable_key {
+        let selected_key = datafile_key(environment, target);
+        let datafile = datafiles
+            .get(&selected_key)
+            .or_else(|| base_datafile(datafiles, environment));
+        let Some(datafile) = datafile else {
+            return Err(format!(
+                "No datafile available for variable assertion {variable_key}"
+            ));
+        };
+        let f = crate::create_featurevisor(FeaturevisorOptions {
+            datafile: Some(input(datafile.clone())),
+            context: Some(context_from_json(assertion.get("context"))),
+            sticky_variables: assertion
+                .get("stickyVariables")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            log_level: Some(log_level(options)),
+            ..Default::default()
+        });
+        let evaluation_options = OverrideOptions {
+            default_variable_value: assertion
+                .get("defaultVariableValue")
+                .cloned()
+                .map(crate::VariableValue::from_json),
+            ..Default::default()
+        };
+        let evaluation = f.evaluate_global_variable(variable_key, None, Some(&evaluation_options));
+        let mut errors = Vec::new();
+        if let Some(expected) = assertion.get("expectedValue") {
+            if evaluation
+                .variable_value
+                .as_ref()
+                .map(crate::VariableValue::to_json)
+                != Some(expected.clone())
+            {
+                errors.push(format!(
+                    "{variable_key}: expected value {expected}, got {:?}",
+                    evaluation.variable_value
+                ));
+            }
+        }
+        if let Some(expected) = assertion
+            .get("expectedEvaluation")
+            .and_then(JsonValue::as_object)
+        {
+            let actual = serde_json::to_value(&evaluation).unwrap_or(JsonValue::Null);
+            compare_evaluation(&mut errors, variable_key, "variable", expected, &actual);
+        }
+        return Ok(errors);
+    }
+
     let Some(feature_key) = feature_key else {
-        return Ok(vec!["test has neither feature nor segment".to_string()]);
+        return Ok(vec!["test has no feature, segment, or variable".to_string()]);
     };
     let selected_key = datafile_key(environment, target);
     let datafile = datafiles
@@ -418,7 +473,10 @@ fn run_assertion(
     let f = crate::create_featurevisor(FeaturevisorOptions {
         datafile: Some(input(datafile.clone())),
         context: Some(context),
-        sticky: Some(sticky),
+        sticky_features: Some(sticky),
+        sticky_variables: assertion
+            .get("stickyVariables")
+            .and_then(|value| serde_json::from_value(value.clone()).ok()),
         log_level: Some(log_level(options)),
         modules: vec![module],
         ..Default::default()

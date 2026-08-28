@@ -1,4 +1,7 @@
-use featurevisor::{create_featurevisor, AttributeValue, DatafileInput, FeaturevisorOptions};
+use featurevisor::{
+    create_featurevisor, AttributeValue, DatafileInput, FeaturevisorOptions, SpawnOptions,
+    StickyVariables,
+};
 use serde_json::json;
 
 #[test]
@@ -36,4 +39,49 @@ fn child_keeps_a_context_snapshot_and_inherits_new_parent_keys() {
     );
     child.close();
     child.close();
+}
+
+#[test]
+fn child_global_variable_sticky_state_is_isolated() {
+    let datafile = serde_json::from_value(json!({
+        "schemaVersion": "2", "revision": "child-variables", "segments": {}, "features": {},
+        "variables": { "message": { "type": "string", "defaultValue": "default" } }
+    }))
+    .unwrap();
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(datafile)),
+        sticky_variables: Some(StickyVariables::from([(
+            "message".to_string(),
+            "parent".into(),
+        )])),
+        ..Default::default()
+    });
+    let child = f.spawn(
+        Default::default(),
+        SpawnOptions {
+            sticky_variables: Some(StickyVariables::from([(
+                "message".to_string(),
+                "child".into(),
+            )])),
+            ..Default::default()
+        },
+    );
+    let plain_child = f.spawn(Default::default(), Default::default());
+    assert_eq!(
+        f.get_global_variable_string("message", None, None)
+            .as_deref(),
+        Some("parent")
+    );
+    assert_eq!(
+        child
+            .get_global_variable_string("message", None, None)
+            .as_deref(),
+        Some("child")
+    );
+    assert_eq!(
+        plain_child
+            .get_global_variable_string("message", None, None)
+            .as_deref(),
+        Some("default")
+    );
 }

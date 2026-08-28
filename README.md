@@ -58,13 +58,13 @@ Add the SDK to `Cargo.toml`:
 
 ```toml
 [dependencies]
-featurevisor = "0.1"
+featurevisor = "1"
 ```
 
 The optional command line runner is available with the `cli` feature:
 
 ```toml
-featurevisor = { version = "0.1", features = ["cli"] }
+featurevisor = { version = "1", features = ["cli"] }
 ```
 
 ## Public API
@@ -101,7 +101,8 @@ Featurevisor evaluates three kinds of values:
 
 * a flag, which answers whether a feature is enabled
 * a variation, which returns a variation value
-* a variable, which returns remote configuration for a feature
+* a feature variable, which returns remote configuration owned by a feature
+* a global variable, which returns remote configuration independently of a feature
 
 All evaluations use a context and the feature rules in the active datafile.
 
@@ -190,6 +191,13 @@ let variation = f.get_variation(
 let value = f.get_variable("my_feature", "backgroundColour", None, None);
 ```
 
+Global variables use explicit method names because Rust does not overload functions:
+
+```rust
+let email = f.get_global_variable("supportEmail", None, None);
+let evaluation = f.evaluate_global_variable("supportEmail", None, None);
+```
+
 ### Type specific methods
 
 The SDK also provides typed getters:
@@ -209,10 +217,11 @@ Typed getters do not coerce strings, booleans, or unrelated collections. Integer
 ## Getting all evaluations
 
 ```rust
-let evaluations = f.get_all_evaluations(None, &[], None);
+let features = f.get_feature_evaluations(None, &[], None);
+let variables = f.get_global_variable_evaluations(None, &[], None);
 ```
 
-Pass a list of feature keys to limit the result. An empty list evaluates every feature in the datafile.
+Pass a list of keys to limit either result. An empty list evaluates every entity of that kind in the datafile. `get_all_evaluations` is a deprecated alias for `get_feature_evaluations`.
 
 ## Sticky
 
@@ -232,7 +241,10 @@ sticky.insert("my_feature".to_string(), EvaluatedFeature {
 });
 
 let f = featurevisor::create_featurevisor(FeaturevisorOptions {
-    sticky: Some(sticky),
+    sticky_features: Some(sticky),
+    sticky_variables: Some(HashMap::from([
+        ("supportEmail".to_string(), "sticky@example.com".into()),
+    ])),
     ..Default::default()
 });
 ```
@@ -240,15 +252,16 @@ let f = featurevisor::create_featurevisor(FeaturevisorOptions {
 ### Set sticky afterwards
 
 ```rust
-f.set_sticky(HashMap::new(), false);
-f.set_sticky(HashMap::new(), true); // replace all sticky values
+f.set_sticky_features(HashMap::new(), false);
+f.set_sticky_variables(HashMap::new(), false);
+f.set_sticky_features(HashMap::new(), true); // replace all sticky feature values
 ```
 
 ## Setting datafile
 
 ### Merging by default
 
-`set_datafile` merges incoming features and segments into the stored datafile. Incoming entries replace entries with the same key.
+`set_datafile` merges incoming features, global variables, and segments into the stored datafile. Incoming entries replace entries with the same key.
 
 ```rust
 f.set_datafile(featurevisor::DatafileInput::Json(datafile_json), false);
@@ -268,7 +281,7 @@ Fetch a datafile using the HTTP client used by your application, then pass its b
 
 ### Updating datafile
 
-Call `set_datafile` whenever your application receives a newer datafile. A `datafile_set` event contains the changed feature keys and revision information.
+Call `set_datafile` whenever your application receives a newer datafile. A `datafile_set` event contains changed feature and global variable keys, including dependants affected by changed requirements or segments, plus revision information.
 
 ### Interval based update
 
@@ -311,7 +324,7 @@ Register an event callback with `f.on(event_name, callback)`. The returned unsub
 
 ### `datafile_set`
 
-Emitted after a valid datafile is stored. Details include `revision`, `previousRevision`, `revisionChanged`, `features`, and `replaced`.
+Emitted after a valid datafile is stored. Details include `revision`, `previousRevision`, `revisionChanged`, `features`, `variables`, and `replaced`.
 
 ### `context_set`
 
@@ -320,6 +333,8 @@ Emitted after context is merged or replaced. Details include `context` and `repl
 ### `sticky_set`
 
 Emitted after sticky features are merged or replaced. Details include `features` and `replaced`.
+
+`sticky_variables_set` is emitted after sticky global variables are merged or replaced. Its details include `variables` and `replaced`.
 
 ### `error`
 
@@ -335,6 +350,7 @@ println!("{evaluation:?}");
 
 let variation_evaluation = f.evaluate_variation("my_feature", None, None);
 let variable_evaluation = f.evaluate_variable("my_feature", "my_variable", None, None);
+let global_evaluation = f.evaluate_global_variable("supportEmail", None, None);
 ```
 
 An evaluation includes the type, feature key, reason, and when applicable the bucket key, bucket value, rule, traffic, variation, variable, or diagnostic error.
@@ -382,7 +398,7 @@ f.remove_module("audit");
 drop(unsubscribe);
 ```
 
-Modules run `before` callbacks in registration order, then bucket key and bucket value callbacks during bucketing, and finally `after` callbacks in registration order. Duplicate names are reported and ignored.
+Modules run `before_evaluation` callbacks in registration order for feature and global variable evaluations, then bucket key and bucket value callbacks during feature bucketing, and finally `after_evaluation` callbacks in registration order. The older `before` and `after` callbacks remain feature only compatibility callbacks. Duplicate names are reported and ignored.
 
 ## Child instance
 
@@ -431,7 +447,7 @@ featurevisor benchmark --projectDirectoryPath=../featurevisor/examples/example-1
 ```
 
 Use either `--variation` or `--variable=<key>` when benchmarking. They cannot be
-used together. The command reports minimum, average, maximum, and total
+used together. Pass `--variable=<key>` without `--feature` to benchmark a global variable. The command reports minimum, average, maximum, and total
 durations in fractional milliseconds for the individual SDK evaluations.
 
 ### Assess distribution

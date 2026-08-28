@@ -39,6 +39,11 @@ pub trait FeaturevisorModule: Send + Sync {
         options
     }
 
+    /// Transforms options before any feature or global variable evaluation.
+    fn before_evaluation(&self, options: EvaluateOptions) -> EvaluateOptions {
+        options
+    }
+
     /// Transforms the bucket key used for an evaluation.
     fn bucket_key(&self, options: ConfigureBucketKeyOptions) -> String {
         options.bucket_key
@@ -51,6 +56,12 @@ pub trait FeaturevisorModule: Send + Sync {
 
     /// Transforms an evaluation after defaults and evaluation details are applied.
     fn after(&self, evaluation: Evaluation, _options: &EvaluateOptions) -> Evaluation {
+        evaluation
+    }
+
+    /// Transforms a result after any feature or global variable evaluation.
+    fn after_evaluation(&self, evaluation: Evaluation, options: &EvaluateOptions) -> Evaluation {
+        let _ = options;
         evaluation
     }
 

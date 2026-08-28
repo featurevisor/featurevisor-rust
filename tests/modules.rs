@@ -11,6 +11,28 @@ struct TestModule {
 
 struct FailingCloseModule;
 
+struct GlobalVariableModule;
+
+impl FeaturevisorModule for GlobalVariableModule {
+    fn before_evaluation(&self, mut options: EvaluateOptions) -> EvaluateOptions {
+        if options.feature_key.is_empty() {
+            options.context.insert("country".to_string(), "nl".into());
+        }
+        options
+    }
+
+    fn after_evaluation(
+        &self,
+        mut evaluation: Evaluation,
+        _options: &EvaluateOptions,
+    ) -> Evaluation {
+        if evaluation.feature_key.is_empty() {
+            evaluation.variable_value = Some("after".into());
+        }
+        evaluation
+    }
+}
+
 impl FeaturevisorModule for FailingCloseModule {
     fn name(&self) -> Option<&str> {
         Some("failing-close")
@@ -117,4 +139,24 @@ fn module_close_failures_include_module_metadata() {
         .expect("module close diagnostic");
     assert_eq!(diagnostic.module_name.as_deref(), Some("failing-close"));
     assert!(diagnostic.original_error.is_some());
+}
+
+#[test]
+fn unified_module_callbacks_apply_to_global_variables() {
+    let datafile = serde_json::from_value(json!({
+        "schemaVersion": "2", "revision": "global", "segments": {}, "features": {},
+        "variables": { "message": { "type": "string", "defaultValue": "default", "overrides": [
+            { "key": "nl", "conditions": { "attribute": "country", "operator": "equals", "value": "nl" }, "value": "matched" }
+        ] } }
+    })).unwrap();
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(datafile)),
+        modules: vec![Arc::new(GlobalVariableModule)],
+        ..Default::default()
+    });
+    assert_eq!(
+        f.get_global_variable_string("message", None, None)
+            .as_deref(),
+        Some("after")
+    );
 }
