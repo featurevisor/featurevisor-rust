@@ -678,7 +678,7 @@ fn evaluate(options: &EvaluateOptions) -> Evaluation {
                 if !required.is_empty()
                     && !required
                         .iter()
-                        .all(|required| required_is_met(required, options, data, report))
+                        .all(|required| required_is_met(required, options))
                 {
                     let mut evaluation = basic(type_, key.clone(), EvaluationReason::Required);
                     evaluation.required_features = Some(required.clone());
@@ -1139,12 +1139,7 @@ fn format_reason(reason: &EvaluationReason) -> String {
         .to_string()
 }
 
-fn required_is_met(
-    required: &Required,
-    options: &EvaluateOptions,
-    data: &EvaluationData,
-    report: &dyn Fn(Diagnostic),
-) -> bool {
+fn required_is_met(required: &Required, options: &EvaluateOptions) -> bool {
     let (key, expected_enabled, expected) = match required {
         Required::Feature(key) => (key, true, None),
         Required::Details {
@@ -1154,7 +1149,7 @@ fn required_is_met(
         } => (feature, enabled.unwrap_or(true), variation.as_deref()),
         Required::LegacyVariation { key, variation } => (key, true, Some(variation.as_str())),
     };
-    let flag = evaluate(&EvaluateOptions {
+    let flag = evaluate_with_modules(EvaluateOptions {
         evaluation_type: EvaluationType::Flag,
         feature_key: key.clone(),
         variable_key: None,
@@ -1164,7 +1159,7 @@ fn required_is_met(
         return false;
     }
     if let Some(expected) = expected {
-        let variation = evaluate(&EvaluateOptions {
+        let variation = evaluate_with_modules(EvaluateOptions {
             evaluation_type: EvaluationType::Variation,
             feature_key: key.clone(),
             variable_key: None,
@@ -1177,8 +1172,6 @@ fn required_is_met(
                 .map(|value| value.value.as_str())
         }) == Some(expected)
     } else {
-        let _ = data;
-        let _ = report;
         true
     }
 }
@@ -1192,7 +1185,7 @@ fn override_matches(
     if item.required_features.as_ref().is_some_and(|requirements| {
         !requirements
             .iter()
-            .all(|required| required_is_met(required, options, data, report))
+            .all(|required| required_is_met(required, options))
     }) {
         return false;
     }

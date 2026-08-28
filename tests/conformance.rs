@@ -64,9 +64,9 @@ fn condition_feature(condition: Value) -> featurevisor::DatafileContent {
 }
 
 #[test]
-fn fixture_is_version_five_and_every_section_is_present() {
+fn fixture_version_and_every_section_are_present() {
     let fixture: Value = serde_json::from_str(include_str!("../conformance/sdk-v3.json")).unwrap();
-    assert_eq!(fixture["version"], 5);
+    assert_eq!(fixture["version"], 6);
     for section in [
         "bucketing",
         "regularExpressions",

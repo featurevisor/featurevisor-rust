@@ -35,7 +35,7 @@ The SDK supports Featurevisor v3 projects and schema version 2 datafiles. The li
 - [Events](#events)
   - [`datafile_set`](#datafile_set)
   - [`context_set`](#context_set)
-  - [`sticky_set`](#sticky_set)
+  - [`sticky_features_set` and `sticky_variables_set`](#sticky_features_set-and-sticky_variables_set)
   - [`error`](#error)
 - [Evaluation details](#evaluation-details)
 - [Modules](#modules)
@@ -221,7 +221,7 @@ let features = f.get_feature_evaluations(None, &[], None);
 let variables = f.get_global_variable_evaluations(None, &[], None);
 ```
 
-Pass a list of keys to limit either result. An empty list evaluates every entity of that kind in the datafile. `get_all_evaluations` is a deprecated alias for `get_feature_evaluations`.
+Pass a list of keys to limit either result. An empty list evaluates every entity of that kind in the datafile.
 
 ## Sticky
 
@@ -330,9 +330,9 @@ Emitted after a valid datafile is stored. Details include `revision`, `previousR
 
 Emitted after context is merged or replaced. Details include `context` and `replaced`.
 
-### `sticky_set`
+### `sticky_features_set` and `sticky_variables_set`
 
-Emitted after sticky features are merged or replaced. Details include `features` and `replaced`.
+`sticky_features_set` is emitted after sticky features are merged or replaced. Details include `features` and `replaced`.
 
 `sticky_variables_set` is emitted after sticky global variables are merged or replaced. Its details include `variables` and `replaced`.
 
@@ -398,7 +398,7 @@ f.remove_module("audit");
 drop(unsubscribe);
 ```
 
-Modules run `before_evaluation` callbacks in registration order for feature and global variable evaluations, then bucket key and bucket value callbacks during feature bucketing, and finally `after_evaluation` callbacks in registration order. The older `before` and `after` callbacks remain feature only compatibility callbacks. Duplicate names are reported and ignored.
+For feature evaluations, all `before` callbacks run in registration order, followed by all `before_evaluation` callbacks. After evaluation and caller defaults, all `after_evaluation` callbacks run, followed by all `after` callbacks. Global variable evaluations use only `before_evaluation` and `after_evaluation`. Required feature checks run through the complete module pipeline, and transformed defaults are preserved. Bucket key and bucket value callbacks run during feature bucketing. Duplicate names are reported and ignored.
 
 ## Child instance
 

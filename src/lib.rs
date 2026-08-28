@@ -56,8 +56,8 @@ pub use chrono;
 pub use diagnostics::{Diagnostic, DiagnosticHandler, LogLevel};
 pub use evaluate::{EvaluateOptions, Evaluation, EvaluationReason, EvaluationType};
 pub use events::{
-    ContextSetDetails, DatafileSetDetails, EventDetails, EventHandler, EventName, StickySetDetails,
-    StickyVariablesSetDetails,
+    ContextSetDetails, DatafileSetDetails, EventDetails, EventHandler, EventName,
+    StickyFeaturesSetDetails, StickyVariablesSetDetails,
 };
 pub use instance::{
     create_featurevisor, Featurevisor, FeaturevisorOptions, OverrideOptions, SpawnOptions,

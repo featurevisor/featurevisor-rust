@@ -11,8 +11,8 @@ pub enum EventName {
     DatafileSet,
     /// Stored context was merged or replaced.
     ContextSet,
-    /// Sticky evaluations were merged or replaced.
-    StickySet,
+    /// Sticky feature evaluations were merged or replaced.
+    StickyFeaturesSet,
     /// Sticky global variables were merged or replaced.
     StickyVariablesSet,
     /// An error diagnostic was emitted.
@@ -45,7 +45,7 @@ pub struct ContextSetDetails {
 #[serde(rename_all = "camelCase")]
 /// Details emitted with a sticky evaluation update event.
 #[allow(missing_docs)]
-pub struct StickySetDetails {
+pub struct StickyFeaturesSetDetails {
     pub features: Vec<String>,
     pub replaced: bool,
 }
@@ -70,7 +70,7 @@ pub enum EventDetails {
     /// Details for a context update.
     ContextSet(ContextSetDetails),
     /// Details for a sticky evaluation update.
-    StickySet(StickySetDetails),
+    StickyFeaturesSet(StickyFeaturesSetDetails),
     /// Details for a sticky global variable update.
     StickyVariablesSet(StickyVariablesSetDetails),
     /// Details for an error diagnostic.

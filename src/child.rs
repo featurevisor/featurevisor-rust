@@ -1,6 +1,8 @@
 use crate::emitter::Emitter;
 use crate::evaluate::{Evaluation, EvaluationType};
-use crate::events::{ContextSetDetails, EventDetails, EventHandler, EventName, StickySetDetails};
+use crate::events::{
+    ContextSetDetails, EventDetails, EventHandler, EventName, StickyFeaturesSetDetails,
+};
 use crate::instance::{Featurevisor, OverrideOptions};
 use crate::types::{
     Context, EvaluatedFeatures, EvaluatedVariables, StickyFeatures, StickyVariables, VariableValue,
@@ -91,11 +93,6 @@ impl FeaturevisorChild {
         }
         self.parent.get_context(Some(&merged))
     }
-    /// Updates sticky evaluations used by this child.
-    pub fn set_sticky(&self, sticky: StickyFeatures, replace: bool) {
-        self.set_sticky_features(sticky, replace);
-    }
-
     /// Updates sticky feature evaluations used by this child.
     pub fn set_sticky_features(&self, sticky: StickyFeatures, replace: bool) {
         let (features, emitter) = {
@@ -117,8 +114,8 @@ impl FeaturevisorChild {
             )
         };
         emitter.emit(
-            EventName::StickySet,
-            EventDetails::StickySet(StickySetDetails {
+            EventName::StickyFeaturesSet,
+            EventDetails::StickyFeaturesSet(StickyFeaturesSetDetails {
                 features,
                 replaced: replace,
             }),
@@ -158,7 +155,7 @@ impl FeaturevisorChild {
     pub fn on(&self, event: EventName, callback: EventHandler) -> Unsubscribe {
         if matches!(
             event,
-            EventName::ContextSet | EventName::StickySet | EventName::StickyVariablesSet
+            EventName::ContextSet | EventName::StickyFeaturesSet | EventName::StickyVariablesSet
         ) {
             return self
                 .inner
@@ -406,18 +403,12 @@ impl FeaturevisorChild {
         if let Some(context) = context {
             merged.extend(context.clone());
         }
-        self.parent
-            .get_all_evaluations_with_sticky(Some(&merged), feature_keys, options, sticky)
-    }
-    /// Deprecated alias for [`FeaturevisorChild::get_feature_evaluations`].
-    #[deprecated(note = "use get_feature_evaluations")]
-    pub fn get_all_evaluations(
-        &self,
-        context: Option<&Context>,
-        feature_keys: &[String],
-        options: Option<&OverrideOptions>,
-    ) -> EvaluatedFeatures {
-        self.get_feature_evaluations(context, feature_keys, options)
+        self.parent.get_feature_evaluations_with_sticky(
+            Some(&merged),
+            feature_keys,
+            options,
+            sticky,
+        )
     }
 
     /// Evaluates a global variable and returns evaluation details.

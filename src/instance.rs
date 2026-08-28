@@ -6,7 +6,8 @@ use crate::evaluate::{
     EvaluationReason, EvaluationType,
 };
 use crate::events::{
-    ContextSetDetails, DatafileSetDetails, EventDetails, EventHandler, EventName, StickySetDetails,
+    ContextSetDetails, DatafileSetDetails, EventDetails, EventHandler, EventName,
+    StickyFeaturesSetDetails,
 };
 use crate::helpers::panic_message;
 use crate::modules::{FeaturevisorModule, ModuleApi, ModuleSubscription};
@@ -434,11 +435,6 @@ impl Featurevisor {
         }
         result
     }
-    /// Updates sticky evaluations, either merging with or replacing them.
-    pub fn set_sticky(&self, sticky: StickyFeatures, replace: bool) {
-        self.set_sticky_features(sticky, replace);
-    }
-
     /// Updates sticky feature evaluations, either merging with or replacing them.
     pub fn set_sticky_features(&self, sticky: StickyFeatures, replace: bool) {
         let (features, emitter) = {
@@ -462,18 +458,22 @@ impl Featurevisor {
             }
             (features, inner.emitter.clone())
         };
-        let details = StickySetDetails {
+        let details = StickyFeaturesSetDetails {
             features,
             replaced: replace,
         };
-        let mut diagnostic = Diagnostic::new(LogLevel::Info, "sticky_set", "Sticky features set");
+        let mut diagnostic =
+            Diagnostic::new(LogLevel::Info, "sticky_features_set", "Sticky features set");
         diagnostic.details = serde_json::to_value(&details)
             .ok()
             .and_then(|value| value.as_object().cloned())
             .map(|value| value.into_iter().collect())
             .unwrap_or_default();
         self.report_diagnostic(diagnostic, None);
-        emitter.emit(EventName::StickySet, EventDetails::StickySet(details));
+        emitter.emit(
+            EventName::StickyFeaturesSet,
+            EventDetails::StickyFeaturesSet(details),
+        );
     }
 
     /// Updates sticky global variables, either merging with or replacing them.
@@ -503,6 +503,17 @@ impl Featurevisor {
             variables,
             replaced: replace,
         };
+        let mut diagnostic = Diagnostic::new(
+            LogLevel::Info,
+            "sticky_variables_set",
+            "Sticky variables set",
+        );
+        diagnostic.details = serde_json::to_value(&details)
+            .ok()
+            .and_then(|value| value.as_object().cloned())
+            .map(|value| value.into_iter().collect())
+            .unwrap_or_default();
+        self.report_diagnostic(diagnostic, None);
         emitter.emit(
             EventName::StickyVariablesSet,
             EventDetails::StickyVariablesSet(details),
@@ -1212,16 +1223,6 @@ impl Featurevisor {
         };
         evaluate_all(&eval_options, &keys)
     }
-    /// Deprecated alias for [`Featurevisor::get_feature_evaluations`].
-    #[deprecated(note = "use get_feature_evaluations")]
-    pub fn get_all_evaluations(
-        &self,
-        context: Option<&Context>,
-        feature_keys: &[String],
-        options: Option<&OverrideOptions>,
-    ) -> EvaluatedFeatures {
-        self.get_feature_evaluations(context, feature_keys, options)
-    }
     /// Creates a child evaluator with its own context and sticky state.
     pub fn spawn(&self, context: Context, options: SpawnOptions) -> FeaturevisorChild {
         FeaturevisorChild::new(
@@ -1290,7 +1291,7 @@ impl Featurevisor {
         evaluation.variable_value
     }
 
-    pub(crate) fn get_all_evaluations_with_sticky(
+    pub(crate) fn get_feature_evaluations_with_sticky(
         &self,
         context: Option<&Context>,
         feature_keys: &[String],
