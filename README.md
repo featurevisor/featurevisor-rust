@@ -400,6 +400,8 @@ drop(unsubscribe);
 
 For feature evaluations, all `before` callbacks run in registration order, followed by all `before_evaluation` callbacks. After evaluation and caller defaults, all `after_evaluation` callbacks run, followed by all `after` callbacks. Global variable evaluations use only `before_evaluation` and `after_evaluation`. Required feature checks run through the complete module pipeline, and transformed defaults are preserved. Bucket key and bucket value callbacks run during feature bucketing. Duplicate names are reported and ignored.
 
+`before` and `after` remain available as deprecated feature-only compatibility callbacks. Use `before_evaluation` and `after_evaluation` for new modules so the same callbacks can handle feature and global variable evaluations.
+
 ## Child instance
 
 A child keeps its own context, sticky values, and listeners while evaluating through the parent's datafile and modules:
