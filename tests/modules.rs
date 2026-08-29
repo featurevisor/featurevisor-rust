@@ -11,6 +11,78 @@ struct TestModule {
 
 struct FailingCloseModule;
 
+struct GlobalVariableModule;
+
+struct RequiredFeatureModule;
+
+struct PhaseModule {
+    name: &'static str,
+    events: Arc<Mutex<Vec<String>>>,
+}
+
+impl FeaturevisorModule for PhaseModule {
+    fn before(&self, options: EvaluateOptions) -> EvaluateOptions {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("before:{}", self.name));
+        options
+    }
+
+    fn before_evaluation(&self, options: EvaluateOptions) -> EvaluateOptions {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("beforeEvaluation:{}", self.name));
+        options
+    }
+
+    fn after_evaluation(&self, evaluation: Evaluation, _options: &EvaluateOptions) -> Evaluation {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("afterEvaluation:{}", self.name));
+        evaluation
+    }
+
+    fn after(&self, evaluation: Evaluation, _options: &EvaluateOptions) -> Evaluation {
+        self.events
+            .lock()
+            .unwrap()
+            .push(format!("after:{}", self.name));
+        evaluation
+    }
+}
+
+impl FeaturevisorModule for RequiredFeatureModule {
+    fn before_evaluation(&self, mut options: EvaluateOptions) -> EvaluateOptions {
+        if options.feature_key == "enabled" {
+            options.feature_key = "disabled".to_string();
+        }
+        options
+    }
+}
+
+impl FeaturevisorModule for GlobalVariableModule {
+    fn before_evaluation(&self, mut options: EvaluateOptions) -> EvaluateOptions {
+        if options.feature_key.is_empty() {
+            options.context.insert("country".to_string(), "nl".into());
+        }
+        options
+    }
+
+    fn after_evaluation(
+        &self,
+        mut evaluation: Evaluation,
+        _options: &EvaluateOptions,
+    ) -> Evaluation {
+        if evaluation.feature_key.is_empty() {
+            evaluation.variable_value = Some("after".into());
+        }
+        evaluation
+    }
+}
+
 impl FeaturevisorModule for FailingCloseModule {
     fn name(&self) -> Option<&str> {
         Some("failing-close")
@@ -79,6 +151,40 @@ fn module_lifecycle_and_duplicate_names_are_handled() {
 }
 
 #[test]
+fn module_phases_follow_the_canonical_order() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(datafile())),
+        modules: vec![
+            Arc::new(PhaseModule {
+                name: "first",
+                events: Arc::clone(&events),
+            }),
+            Arc::new(PhaseModule {
+                name: "second",
+                events: Arc::clone(&events),
+            }),
+        ],
+        ..Default::default()
+    });
+
+    assert!(f.is_enabled("flag", None));
+    assert_eq!(
+        *events.lock().unwrap(),
+        vec![
+            "before:first",
+            "before:second",
+            "beforeEvaluation:first",
+            "beforeEvaluation:second",
+            "afterEvaluation:first",
+            "afterEvaluation:second",
+            "after:first",
+            "after:second",
+        ]
+    );
+}
+
+#[test]
 fn diagnostics_and_error_events_are_available() {
     let diagnostics = Arc::new(Mutex::new(Vec::<Diagnostic>::new()));
     let observed = Arc::clone(&diagnostics);
@@ -117,4 +223,43 @@ fn module_close_failures_include_module_metadata() {
         .expect("module close diagnostic");
     assert_eq!(diagnostic.module_name.as_deref(), Some("failing-close"));
     assert!(diagnostic.original_error.is_some());
+}
+
+#[test]
+fn unified_module_callbacks_apply_to_global_variables() {
+    let datafile = serde_json::from_value(json!({
+        "schemaVersion": "2", "revision": "global", "segments": {}, "features": {},
+        "variables": { "message": { "type": "string", "defaultValue": "default", "overrides": [
+            { "key": "nl", "conditions": { "attribute": "country", "operator": "equals", "value": "nl" }, "value": "matched" }
+        ] } }
+    })).unwrap();
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(datafile)),
+        modules: vec![Arc::new(GlobalVariableModule)],
+        ..Default::default()
+    });
+    assert_eq!(
+        f.get_global_variable_string("message", None, None)
+            .as_deref(),
+        Some("after")
+    );
+}
+
+#[test]
+fn required_feature_evaluations_use_modules() {
+    let datafile = serde_json::from_value(json!({
+        "schemaVersion": "2", "revision": "required", "segments": {},
+        "features": {
+            "enabled": { "bucketBy": "userId", "traffic": [{ "key": "all", "segments": "*", "percentage": 100000 }] },
+            "disabled": { "bucketBy": "userId", "traffic": [] },
+            "dependent": { "bucketBy": "userId", "requiredFeatures": ["enabled"], "traffic": [{ "key": "all", "segments": "*", "percentage": 100000 }] }
+        }
+    })).unwrap();
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(datafile)),
+        modules: vec![Arc::new(RequiredFeatureModule)],
+        ..Default::default()
+    });
+
+    assert!(!f.is_enabled("dependent", None));
 }

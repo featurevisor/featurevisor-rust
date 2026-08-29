@@ -56,7 +56,8 @@ pub use chrono;
 pub use diagnostics::{Diagnostic, DiagnosticHandler, LogLevel};
 pub use evaluate::{EvaluateOptions, Evaluation, EvaluationReason, EvaluationType};
 pub use events::{
-    ContextSetDetails, DatafileSetDetails, EventDetails, EventHandler, EventName, StickySetDetails,
+    ContextSetDetails, DatafileSetDetails, EventDetails, EventHandler, EventName,
+    StickyFeaturesSetDetails, StickyVariablesSetDetails,
 };
 pub use instance::{
     create_featurevisor, Featurevisor, FeaturevisorOptions, OverrideOptions, SpawnOptions,
@@ -66,10 +67,11 @@ pub use modules::{
 };
 pub use types::{
     Allocation, AndCondition, AndGroupSegment, AttributeValue, BucketBy, Condition, Context,
-    DatafileContent, DatafileInput, EvaluatedFeature, EvaluatedFeatures, Feature, FeatureKey,
-    Force, GroupSegment, NotCondition, NotGroupSegment, Operator, OrCondition, OrGroupSegment,
-    PlainCondition, Required, ResolvedVariableSchema, RuleKey, Segment, SegmentKey, StickyFeatures,
-    Traffic, VariableOverride, VariableValue, Variation, VariationValue,
+    DatafileContent, DatafileInput, EvaluatedFeature, EvaluatedFeatures, EvaluatedVariables,
+    Feature, FeatureKey, Force, GlobalVariable, GroupSegment, NotCondition, NotGroupSegment,
+    Operator, OrCondition, OrGroupSegment, PlainCondition, Required, ResolvedVariableSchema,
+    RuleKey, Segment, SegmentKey, StickyFeatures, StickyVariables, Traffic, VariableOverride,
+    VariableValue, Variation, VariationValue,
 };
 
 /// A one shot cleanup callback returned by subscriptions and module registration.

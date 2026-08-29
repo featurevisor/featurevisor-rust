@@ -29,5 +29,6 @@ fn primary_public_api_is_usable_by_an_external_consumer() {
     let _attribute = AttributeValue::from(vec!["one", "two"]);
     let _ = f.get_revision();
     let _ = f.get_schema_version();
-    let _ = f.get_all_evaluations(None, &[], None);
+    let _ = f.get_feature_evaluations(None, &[], None);
+    let _ = f.get_global_variable_evaluations(None, &[], None);
 }

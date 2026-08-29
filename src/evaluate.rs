@@ -4,8 +4,9 @@ use crate::diagnostics::{Diagnostic, LogLevel};
 use crate::helpers::panic_message;
 use crate::modules::{ConfigureBucketKeyOptions, ConfigureBucketValueOptions, FeaturevisorModule};
 use crate::types::{
-    Allocation, Context, DatafileContent, EvaluatedFeature, Feature, Force, Required,
-    ResolvedVariableSchema, StickyFeatures, Traffic, VariableOverride, VariableValue, Variation,
+    Allocation, Context, DatafileContent, EvaluatedFeature, Feature, Force, GlobalVariable,
+    Required, ResolvedVariableSchema, StickyFeatures, Traffic, VariableOverride, VariableValue,
+    Variation,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -48,6 +49,8 @@ pub enum EvaluationReason {
     VariableDefault,
     /// The variable was disabled.
     VariableDisabled,
+    /// One or more required features for a global variable were not satisfied.
+    RequiredFeaturesUnmet,
     /// The value came from a variation override.
     VariableOverrideVariation,
     /// The value came from a rule override.
@@ -73,6 +76,7 @@ pub enum EvaluationReason {
 pub struct Evaluation {
     #[serde(rename = "type")]
     pub evaluation_type: EvaluationType,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub feature_key: String,
     pub reason: EvaluationReason,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -92,7 +96,7 @@ pub struct Evaluation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force: Option<Force>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub required: Option<Vec<Required>>,
+    pub required_features: Option<Vec<Required>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sticky: Option<EvaluatedFeature>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -106,7 +110,13 @@ pub struct Evaluation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub variable_schema: Option<ResolvedVariableSchema>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable: Option<GlobalVariable>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub variable_override_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable_override_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable_override_path: Option<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -167,7 +177,7 @@ impl EvaluationData {
         self.datafile.features.get(key).cloned()
     }
 
-    fn all_conditions(
+    pub(crate) fn all_conditions(
         &self,
         value: &JsonValue,
         context: &Context,
@@ -281,6 +291,10 @@ pub(crate) fn evaluate_with_modules(mut options: EvaluateOptions) -> Evaluation 
         for module in modules.iter() {
             options = module.before(options.clone());
         }
+        let modules = Arc::clone(&options.modules);
+        for module in modules.iter() {
+            options = module.before_evaluation(options.clone());
+        }
         let mut evaluation = evaluate(&options);
         if let Some(default) = options.default_variation_value.clone() {
             if evaluation.evaluation_type == EvaluationType::Variation
@@ -296,6 +310,9 @@ pub(crate) fn evaluate_with_modules(mut options: EvaluateOptions) -> Evaluation 
             {
                 evaluation.variable_value = Some(default);
             }
+        }
+        for module in options.modules.iter() {
+            evaluation = module.after_evaluation(evaluation, &options);
         }
         for module in options.modules.iter() {
             evaluation = module.after(evaluation, &options);
@@ -317,14 +334,17 @@ pub(crate) fn evaluate_with_modules(mut options: EvaluateOptions) -> Evaluation 
                 traffic: None,
                 force_index: None,
                 force: None,
-                required: None,
+                required_features: None,
                 sticky: None,
                 variation: None,
                 variation_value: None,
                 variable_key: original.variable_key.clone(),
                 variable_value: None,
                 variable_schema: None,
+                variable: None,
                 variable_override_index: None,
+                variable_override_key: None,
+                variable_override_path: None,
             };
             apply_diagnostic(
                 original.report.as_ref(),
@@ -364,14 +384,17 @@ fn evaluate(options: &EvaluateOptions) -> Evaluation {
                     traffic: None,
                     force_index: None,
                     force: None,
-                    required: None,
+                    required_features: None,
                     sticky: None,
                     variation: None,
                     variation_value: None,
                     variable_key: variable_key.clone(),
                     variable_value: None,
                     variable_schema: None,
+                    variable: None,
                     variable_override_index: None,
+                    variable_override_key: None,
+                    variable_override_path: None,
                 };
                 if let (EvaluationType::Variable, Some(variable_key)) =
                     (type_, variable_key.as_ref())
@@ -429,14 +452,17 @@ fn evaluate(options: &EvaluateOptions) -> Evaluation {
                         traffic: None,
                         force_index: None,
                         force: None,
-                        required: None,
+                        required_features: None,
                         sticky: Some(sticky_feature.clone()),
                         variation: None,
                         variation_value: None,
                         variable_key: None,
                         variable_value: None,
                         variable_schema: None,
+                        variable: None,
                         variable_override_index: None,
+                        variable_override_key: None,
+                        variable_override_path: None,
                     };
                     apply_diagnostic(
                         report,
@@ -644,14 +670,18 @@ fn evaluate(options: &EvaluateOptions) -> Evaluation {
         }
 
         if type_ == EvaluationType::Flag {
-            if let Some(required) = &feature.required {
+            if let Some(required) = feature
+                .required_features
+                .as_ref()
+                .or(feature.required.as_ref())
+            {
                 if !required.is_empty()
                     && !required
                         .iter()
-                        .all(|required| required_is_met(required, options, data, report))
+                        .all(|required| required_is_met(required, options))
                 {
                     let mut evaluation = basic(type_, key.clone(), EvaluationReason::Required);
-                    evaluation.required = Some(required.clone());
+                    evaluation.required_features = Some(required.clone());
                     evaluation.enabled = Some(false);
                     apply_diagnostic(
                         report,
@@ -863,6 +893,8 @@ fn evaluate(options: &EvaluateOptions) -> Evaluation {
                             evaluation.rule_key = Some(traffic.key.clone());
                             evaluation.traffic = Some(traffic.clone());
                             evaluation.variable_override_index = Some(index);
+                            evaluation.variable_override_key = override_value.key.clone();
+                            evaluation.variable_override_path = override_value.key_path.clone();
                             apply_diagnostic(
                                 report,
                                 &evaluation,
@@ -942,6 +974,8 @@ fn evaluate(options: &EvaluateOptions) -> Evaluation {
                                     matched_traffic.as_ref().map(|traffic| traffic.key.clone());
                                 evaluation.traffic = matched_traffic.clone();
                                 evaluation.variable_override_index = Some(index);
+                                evaluation.variable_override_key = override_value.key.clone();
+                                evaluation.variable_override_path = override_value.key_path.clone();
                                 apply_diagnostic(
                                     report,
                                     &evaluation,
@@ -1063,14 +1097,17 @@ fn basic(
         traffic: None,
         force_index: None,
         force: None,
-        required: None,
+        required_features: None,
         sticky: None,
         variation: None,
         variation_value: None,
         variable_key: None,
         variable_value: None,
         variable_schema: None,
+        variable: None,
         variable_override_index: None,
+        variable_override_key: None,
+        variable_override_path: None,
     }
 }
 fn basic_variation(
@@ -1102,28 +1139,30 @@ fn format_reason(reason: &EvaluationReason) -> String {
         .to_string()
 }
 
-fn required_is_met(
-    required: &Required,
-    options: &EvaluateOptions,
-    data: &EvaluationData,
-    report: &dyn Fn(Diagnostic),
-) -> bool {
-    let (key, expected) = match required {
-        Required::Feature(key) => (key, None),
-        Required::Variation { key, variation } => (key, Some(variation.as_str())),
+fn required_is_met(required: &Required, options: &EvaluateOptions) -> bool {
+    let (key, expected_enabled, expected) = match required {
+        Required::Feature(key) => (key, true, None),
+        Required::Details {
+            feature,
+            enabled,
+            variation,
+        } => (feature, enabled.unwrap_or(true), variation.as_deref()),
+        Required::LegacyVariation { key, variation } => (key, true, Some(variation.as_str())),
     };
-    let flag = evaluate(&EvaluateOptions {
+    let flag = evaluate_with_modules(EvaluateOptions {
         evaluation_type: EvaluationType::Flag,
         feature_key: key.clone(),
+        variable_key: None,
         ..options.clone()
     });
-    if flag.enabled != Some(true) {
+    if (flag.enabled == Some(true)) != expected_enabled {
         return false;
     }
     if let Some(expected) = expected {
-        let variation = evaluate(&EvaluateOptions {
+        let variation = evaluate_with_modules(EvaluateOptions {
             evaluation_type: EvaluationType::Variation,
             feature_key: key.clone(),
+            variable_key: None,
             ..options.clone()
         });
         variation.variation_value.as_deref().or_else(|| {
@@ -1133,8 +1172,6 @@ fn required_is_met(
                 .map(|value| value.value.as_str())
         }) == Some(expected)
     } else {
-        let _ = data;
-        let _ = report;
         true
     }
 }
@@ -1145,13 +1182,24 @@ fn override_matches(
     data: &EvaluationData,
     report: &dyn Fn(Diagnostic),
 ) -> bool {
-    if let Some(conditions) = &item.conditions {
-        return data.all_conditions(conditions, &options.context, report);
+    if item.required_features.as_ref().is_some_and(|requirements| {
+        !requirements
+            .iter()
+            .all(|required| required_is_met(required, options))
+    }) {
+        return false;
     }
-    if let Some(segments) = &item.segments {
-        return data.all_segments(segments, &options.context, report);
-    }
-    false
+    let conditions_match = item.conditions.as_ref().map_or(true, |conditions| {
+        data.all_conditions(conditions, &options.context, report)
+    });
+    let segments_match = item.segments.as_ref().map_or(true, |segments| {
+        data.all_segments(segments, &options.context, report)
+    });
+    conditions_match
+        && segments_match
+        && (item.conditions.is_some()
+            || item.segments.is_some()
+            || item.required_features.is_some())
 }
 
 pub(crate) fn evaluate_all(

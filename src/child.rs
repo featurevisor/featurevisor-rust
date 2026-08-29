@@ -1,14 +1,19 @@
 use crate::emitter::Emitter;
 use crate::evaluate::{Evaluation, EvaluationType};
-use crate::events::{ContextSetDetails, EventDetails, EventHandler, EventName, StickySetDetails};
+use crate::events::{
+    ContextSetDetails, EventDetails, EventHandler, EventName, StickyFeaturesSetDetails,
+};
 use crate::instance::{Featurevisor, OverrideOptions};
-use crate::types::{Context, EvaluatedFeatures, StickyFeatures, VariableValue};
+use crate::types::{
+    Context, EvaluatedFeatures, EvaluatedVariables, StickyFeatures, StickyVariables, VariableValue,
+};
 use crate::Unsubscribe;
 use std::sync::{Arc, Mutex};
 
 struct ChildInner {
     context: Context,
-    sticky: StickyFeatures,
+    sticky_features: StickyFeatures,
+    sticky_variables: StickyVariables,
     emitter: Emitter,
     parent_unsubscribers: Vec<Unsubscribe>,
     closed: bool,
@@ -22,12 +27,18 @@ pub struct FeaturevisorChild {
 }
 
 impl FeaturevisorChild {
-    pub(crate) fn new(parent: Featurevisor, context: Context, sticky: StickyFeatures) -> Self {
+    pub(crate) fn new(
+        parent: Featurevisor,
+        context: Context,
+        sticky_features: StickyFeatures,
+        sticky_variables: StickyVariables,
+    ) -> Self {
         Self {
             parent,
             inner: Arc::new(Mutex::new(ChildInner {
                 context,
-                sticky,
+                sticky_features,
+                sticky_variables,
                 emitter: Emitter::default(),
                 parent_unsubscribers: Vec::new(),
                 closed: false,
@@ -35,10 +46,16 @@ impl FeaturevisorChild {
         }
     }
 
-    fn options(&self) -> (Context, StickyFeatures) {
+    fn options(&self) -> (Context, StickyFeatures, StickyVariables) {
         self.inner
             .lock()
-            .map(|inner| (inner.context.clone(), inner.sticky.clone()))
+            .map(|inner| {
+                (
+                    inner.context.clone(),
+                    inner.sticky_features.clone(),
+                    inner.sticky_variables.clone(),
+                )
+            })
             .unwrap_or_default()
     }
 
@@ -69,15 +86,15 @@ impl FeaturevisorChild {
     }
     /// Returns the child context merged with an optional per evaluation context.
     pub fn get_context(&self, context: Option<&Context>) -> Context {
-        let (stored, _) = self.options();
+        let (stored, _, _) = self.options();
         let mut merged = stored;
         if let Some(context) = context {
             merged.extend(context.clone());
         }
         self.parent.get_context(Some(&merged))
     }
-    /// Updates sticky evaluations used by this child.
-    pub fn set_sticky(&self, sticky: StickyFeatures, replace: bool) {
+    /// Updates sticky feature evaluations used by this child.
+    pub fn set_sticky_features(&self, sticky: StickyFeatures, replace: bool) {
         let (features, emitter) = {
             let mut inner = match self.inner.lock() {
                 Ok(inner) => inner,
@@ -87,19 +104,48 @@ impl FeaturevisorChild {
                 return;
             }
             if replace {
-                inner.sticky = sticky;
+                inner.sticky_features = sticky;
             } else {
-                inner.sticky.extend(sticky);
+                inner.sticky_features.extend(sticky);
             }
             (
-                inner.sticky.keys().cloned().collect(),
+                inner.sticky_features.keys().cloned().collect(),
                 inner.emitter.clone(),
             )
         };
         emitter.emit(
-            EventName::StickySet,
-            EventDetails::StickySet(StickySetDetails {
+            EventName::StickyFeaturesSet,
+            EventDetails::StickyFeaturesSet(StickyFeaturesSetDetails {
                 features,
+                replaced: replace,
+            }),
+        );
+    }
+
+    /// Updates sticky global variable values used by this child.
+    pub fn set_sticky_variables(&self, sticky: StickyVariables, replace: bool) {
+        let (variables, emitter) = {
+            let mut inner = match self.inner.lock() {
+                Ok(inner) => inner,
+                Err(_) => return,
+            };
+            if inner.closed {
+                return;
+            }
+            if replace {
+                inner.sticky_variables = sticky;
+            } else {
+                inner.sticky_variables.extend(sticky);
+            }
+            (
+                inner.sticky_variables.keys().cloned().collect(),
+                inner.emitter.clone(),
+            )
+        };
+        emitter.emit(
+            EventName::StickyVariablesSet,
+            EventDetails::StickyVariablesSet(crate::events::StickyVariablesSetDetails {
+                variables,
                 replaced: replace,
             }),
         );
@@ -107,7 +153,10 @@ impl FeaturevisorChild {
 
     /// Subscribes to child events and returns an idempotent cleanup function.
     pub fn on(&self, event: EventName, callback: EventHandler) -> Unsubscribe {
-        if matches!(event, EventName::ContextSet | EventName::StickySet) {
+        if matches!(
+            event,
+            EventName::ContextSet | EventName::StickyFeaturesSet | EventName::StickyVariablesSet
+        ) {
             return self
                 .inner
                 .lock()
@@ -169,7 +218,7 @@ impl FeaturevisorChild {
         context: Option<&Context>,
         options: Option<&OverrideOptions>,
     ) -> Evaluation {
-        let (stored, sticky) = self.options();
+        let (stored, sticky, _) = self.options();
         let mut merged = stored;
         if let Some(context) = context {
             merged.extend(context.clone());
@@ -343,18 +392,172 @@ impl FeaturevisorChild {
         self.get_variable(feature_key, variable_key, context, options)
     }
     /// Evaluates all requested features, or every feature when no keys are supplied.
-    pub fn get_all_evaluations(
+    pub fn get_feature_evaluations(
         &self,
         context: Option<&Context>,
         feature_keys: &[String],
         options: Option<&OverrideOptions>,
     ) -> EvaluatedFeatures {
-        let (stored, sticky) = self.options();
+        let (stored, sticky, _) = self.options();
         let mut merged = stored;
         if let Some(context) = context {
             merged.extend(context.clone());
         }
-        self.parent
-            .get_all_evaluations_with_sticky(Some(&merged), feature_keys, options, sticky)
+        self.parent.get_feature_evaluations_with_sticky(
+            Some(&merged),
+            feature_keys,
+            options,
+            sticky,
+        )
+    }
+
+    /// Evaluates a global variable and returns evaluation details.
+    pub fn evaluate_global_variable(
+        &self,
+        variable_key: &str,
+        context: Option<&Context>,
+        options: Option<&OverrideOptions>,
+    ) -> Evaluation {
+        let (stored, _, sticky_variables) = self.options();
+        let mut merged = stored;
+        if let Some(context) = context {
+            merged.extend(context.clone());
+        }
+        self.parent.evaluate_global_variable_with_sticky(
+            variable_key,
+            Some(&merged),
+            options,
+            sticky_variables,
+        )
+    }
+
+    /// Returns a global variable value, if one is available.
+    pub fn get_global_variable(
+        &self,
+        variable_key: &str,
+        context: Option<&Context>,
+        options: Option<&OverrideOptions>,
+    ) -> Option<VariableValue> {
+        let evaluation = self.evaluate_global_variable(variable_key, context, options);
+        let is_json = evaluation
+            .variable
+            .as_ref()
+            .map(|variable| variable.variable_type == "json")
+            .unwrap_or(false);
+        let value = evaluation.variable_value?;
+        if is_json {
+            if let VariableValue::String(string) = &value {
+                return serde_json::from_str::<serde_json::Value>(string)
+                    .ok()
+                    .map(VariableValue::from_json);
+            }
+        }
+        Some(value)
+    }
+
+    /// Returns a global variable as a boolean when its value has that type.
+    pub fn get_global_variable_boolean(
+        &self,
+        key: &str,
+        context: Option<&Context>,
+        options: Option<&OverrideOptions>,
+    ) -> Option<bool> {
+        match self.get_global_variable(key, context, options)? {
+            VariableValue::Boolean(value) => Some(value),
+            _ => None,
+        }
+    }
+    /// Returns a global variable as a string when its value has that type.
+    pub fn get_global_variable_string(
+        &self,
+        key: &str,
+        context: Option<&Context>,
+        options: Option<&OverrideOptions>,
+    ) -> Option<String> {
+        match self.get_global_variable(key, context, options)? {
+            VariableValue::String(value) => Some(value),
+            _ => None,
+        }
+    }
+    /// Returns a global variable as an integer when its value has that type.
+    pub fn get_global_variable_integer(
+        &self,
+        key: &str,
+        context: Option<&Context>,
+        options: Option<&OverrideOptions>,
+    ) -> Option<i64> {
+        match self.get_global_variable(key, context, options)? {
+            VariableValue::Integer(value) => Some(value),
+            VariableValue::Double(value) if value.is_finite() && value.fract() == 0.0 => {
+                Some(value as i64)
+            }
+            _ => None,
+        }
+    }
+    /// Returns a global variable as a double when its value has that type.
+    pub fn get_global_variable_double(
+        &self,
+        key: &str,
+        context: Option<&Context>,
+        options: Option<&OverrideOptions>,
+    ) -> Option<f64> {
+        match self.get_global_variable(key, context, options)? {
+            VariableValue::Integer(value) => Some(value as f64),
+            VariableValue::Double(value) if value.is_finite() => Some(value),
+            _ => None,
+        }
+    }
+    /// Returns a global variable as an array when its value has that type.
+    pub fn get_global_variable_array(
+        &self,
+        key: &str,
+        context: Option<&Context>,
+        options: Option<&OverrideOptions>,
+    ) -> Option<Vec<VariableValue>> {
+        match self.get_global_variable(key, context, options)? {
+            VariableValue::Array(value) => Some(value),
+            _ => None,
+        }
+    }
+    /// Returns a global variable as an object when its value has that type.
+    pub fn get_global_variable_object(
+        &self,
+        key: &str,
+        context: Option<&Context>,
+        options: Option<&OverrideOptions>,
+    ) -> Option<std::collections::HashMap<String, VariableValue>> {
+        match self.get_global_variable(key, context, options)? {
+            VariableValue::Object(value) => Some(value),
+            _ => None,
+        }
+    }
+    /// Returns a global variable value without imposing a more specific Rust type.
+    pub fn get_global_variable_json(
+        &self,
+        key: &str,
+        context: Option<&Context>,
+        options: Option<&OverrideOptions>,
+    ) -> Option<VariableValue> {
+        self.get_global_variable(key, context, options)
+    }
+
+    /// Evaluates requested global variables, or every global variable when no keys are supplied.
+    pub fn get_global_variable_evaluations(
+        &self,
+        context: Option<&Context>,
+        variable_keys: &[String],
+        options: Option<&OverrideOptions>,
+    ) -> EvaluatedVariables {
+        let keys = if variable_keys.is_empty() {
+            self.parent.get_global_variable_keys()
+        } else {
+            variable_keys.to_vec()
+        };
+        keys.into_iter()
+            .filter_map(|key| {
+                self.get_global_variable(&key, context, options)
+                    .map(|value| (key, value))
+            })
+            .collect()
     }
 }

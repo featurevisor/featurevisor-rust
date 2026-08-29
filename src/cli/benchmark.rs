@@ -32,11 +32,22 @@ fn one(options: &BenchmarkOptions, project: &Path, target: Option<&str>) -> Resu
     for _ in 0..n {
         let start = Instant::now();
         if let Some(variable) = &options.variable {
-            let _ = f.get_variable(&options.feature, variable, Some(&context), None);
+            if let Some(feature) = &options.feature {
+                let _ = f.get_variable(feature, variable, Some(&context), None);
+            } else {
+                let _ = f.get_global_variable(variable, Some(&context), None);
+            }
         } else if options.variation {
-            let _ = f.get_variation(&options.feature, Some(&context), None);
+            let _ = f.get_variation(
+                options.feature.as_deref().unwrap_or_default(),
+                Some(&context),
+                None,
+            );
         } else {
-            let _ = f.is_enabled(&options.feature, Some(&context));
+            let _ = f.is_enabled(
+                options.feature.as_deref().unwrap_or_default(),
+                Some(&context),
+            );
         }
         durations.push(start.elapsed().as_nanos());
     }
@@ -52,8 +63,22 @@ fn one(options: &BenchmarkOptions, project: &Path, target: Option<&str>) -> Resu
         "flag"
     };
     println!();
-    println!("Benchmark Featurevisor feature");
-    println!("  Feature: {}", options.feature);
+    println!(
+        "Benchmark Featurevisor {}",
+        if options.feature.is_some() {
+            "feature"
+        } else {
+            "variable"
+        }
+    );
+    if let Some(feature) = &options.feature {
+        println!("  Feature: {feature}");
+    }
+    if options.feature.is_none() {
+        if let Some(variable) = &options.variable {
+            println!("  Variable: {variable}");
+        }
+    }
     println!(
         "  Environment: {}",
         options.common.environment.as_deref().unwrap_or("false")
