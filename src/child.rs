@@ -418,7 +418,7 @@ impl FeaturevisorChild {
         context: Option<&Context>,
         options: Option<&OverrideOptions>,
     ) -> Evaluation {
-        let (stored, _, sticky_variables) = self.options();
+        let (stored, sticky_features, sticky_variables) = self.options();
         let mut merged = stored;
         if let Some(context) = context {
             merged.extend(context.clone());
@@ -427,6 +427,7 @@ impl FeaturevisorChild {
             variable_key,
             Some(&merged),
             options,
+            sticky_features,
             sticky_variables,
         )
     }

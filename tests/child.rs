@@ -1,6 +1,6 @@
 use featurevisor::{
-    create_featurevisor, AttributeValue, DatafileInput, FeaturevisorOptions, SpawnOptions,
-    StickyVariables,
+    create_featurevisor, AttributeValue, DatafileInput, EvaluatedFeature, FeaturevisorOptions,
+    SpawnOptions, StickyFeatures, StickyVariables,
 };
 use serde_json::json;
 
@@ -39,6 +39,60 @@ fn child_keeps_a_context_snapshot_and_inherits_new_parent_keys() {
     );
     child.close();
     child.close();
+}
+
+#[test]
+fn child_global_variable_required_features_use_child_sticky_state() {
+    let datafile = serde_json::from_value(json!({
+        "schemaVersion": "2",
+        "revision": "child-required-feature",
+        "segments": {},
+        "features": {
+            "dependency": {
+                "bucketBy": ["userId"],
+                "traffic": [{ "key": "all", "segments": "*", "percentage": 100000 }]
+            }
+        },
+        "variables": {
+            "message": {
+                "type": "string",
+                "defaultValue": "available",
+                "disabledValue": "unavailable",
+                "requiredFeatures": ["dependency"]
+            }
+        }
+    }))
+    .unwrap();
+    let f = create_featurevisor(FeaturevisorOptions {
+        datafile: Some(DatafileInput::Content(datafile)),
+        context: Some(
+            [(String::from("userId"), AttributeValue::from("one"))]
+                .into_iter()
+                .collect(),
+        ),
+        sticky_features: Some(StickyFeatures::from([(
+            "dependency".to_string(),
+            EvaluatedFeature {
+                enabled: false,
+                variation: None,
+                variables: None,
+            },
+        )])),
+        ..Default::default()
+    });
+    let child = f.spawn(Default::default(), Default::default());
+
+    assert_eq!(
+        f.get_global_variable_string("message", None, None)
+            .as_deref(),
+        Some("unavailable")
+    );
+    assert_eq!(
+        child
+            .get_global_variable_string("message", None, None)
+            .as_deref(),
+        Some("available")
+    );
 }
 
 #[test]

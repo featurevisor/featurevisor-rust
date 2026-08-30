@@ -92,6 +92,44 @@ fn compare_evaluation(
     }
 }
 
+fn compare_global_variable_evaluation(
+    errors: &mut Vec<String>,
+    variable_key: &str,
+    assertion: &JsonValue,
+    evaluation: &crate::Evaluation,
+    child_index: Option<usize>,
+) {
+    let prefix = child_index
+        .map(|index| format!("children[{index}]."))
+        .unwrap_or_default();
+    if let Some(expected) = assertion.get("expectedValue") {
+        let actual = evaluation
+            .variable_value
+            .as_ref()
+            .map(crate::VariableValue::to_json)
+            .unwrap_or(JsonValue::Null);
+        if actual != *expected {
+            errors.push(format!(
+                "{variable_key}: {prefix}expectedValue expected {expected}, got {actual}"
+            ));
+        }
+    }
+    if let Some(expected) = assertion
+        .get("expectedEvaluation")
+        .and_then(JsonValue::as_object)
+    {
+        let actual = serde_json::to_value(evaluation).unwrap_or(JsonValue::Null);
+        for (key, expected_value) in expected {
+            let actual_value = actual.get(key).cloned().unwrap_or(JsonValue::Null);
+            if actual_value != *expected_value {
+                errors.push(format!(
+                    "{variable_key}: {prefix}expectedEvaluation.{key} expected {expected_value}, got {actual_value}"
+                ));
+            }
+        }
+    }
+}
+
 fn compare_evaluations(
     errors: &mut Vec<String>,
     feature_key: &str,
@@ -360,15 +398,12 @@ fn run_assertion(
     }
 
     if let Some(segment_key) = segment_key {
-        let datafile = base_datafile(datafiles, environment);
-        let Some(datafile) = datafile else {
-            return Err(format!(
-                "No datafile available for segment assertion {segment_key}"
-            ));
-        };
         let context = context_from_json(assertion.get("context"));
-        let mut segment_datafile = datafile.clone();
-        segment_datafile.segments = segments.clone();
+        let segment_datafile = crate::DatafileContent {
+            revision: "tester".to_string(),
+            segments: segments.clone(),
+            ..Default::default()
+        };
         let f = crate::create_featurevisor(FeaturevisorOptions {
             datafile: Some(input(segment_datafile)),
             context: Some(context.clone()),
@@ -383,32 +418,44 @@ fn run_assertion(
             .get("expectedToMatch")
             .and_then(JsonValue::as_bool)
             .unwrap_or(false);
-        return if actual == expected {
+        let result = if actual == expected {
             Ok(Vec::new())
         } else {
             Ok(vec![format!(
                 "{segment_key}: expected segment match {expected}, got {actual}"
             )])
         };
+        f.close();
+        return result;
     }
 
     if let Some(variable_key) = variable_key {
         let selected_key = datafile_key(environment, target);
-        let datafile = datafiles
-            .get(&selected_key)
-            .or_else(|| base_datafile(datafiles, environment));
+        let datafile = datafiles.get(&selected_key);
         let Some(datafile) = datafile else {
             return Err(format!(
                 "No datafile available for variable assertion {variable_key}"
             ));
         };
+        if options.common.show_datafile {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(datafile).unwrap_or_default()
+            );
+        }
         let f = crate::create_featurevisor(FeaturevisorOptions {
             datafile: Some(input(datafile.clone())),
             context: Some(context_from_json(assertion.get("context"))),
             sticky_variables: assertion
                 .get("stickyVariables")
                 .and_then(|value| serde_json::from_value(value.clone()).ok()),
+            sticky_features: assertion
+                .get("stickyFeatures")
+                .and_then(|value| serde_json::from_value(value.clone()).ok()),
             log_level: Some(log_level(options)),
+            modules: vec![Arc::new(AtModule {
+                at: assertion.get("at").and_then(JsonValue::as_f64),
+            })],
             ..Default::default()
         });
         let evaluation_options = OverrideOptions {
@@ -420,26 +467,42 @@ fn run_assertion(
         };
         let evaluation = f.evaluate_global_variable(variable_key, None, Some(&evaluation_options));
         let mut errors = Vec::new();
-        if let Some(expected) = assertion.get("expectedValue") {
-            if evaluation
-                .variable_value
-                .as_ref()
-                .map(crate::VariableValue::to_json)
-                != Some(expected.clone())
-            {
-                errors.push(format!(
-                    "{variable_key}: expected value {expected}, got {:?}",
-                    evaluation.variable_value
-                ));
+        compare_global_variable_evaluation(&mut errors, variable_key, assertion, &evaluation, None);
+        if let Some(children) = assertion.get("children").and_then(JsonValue::as_array) {
+            for (child_index, child_assertion) in children.iter().enumerate() {
+                let child = f.spawn(
+                    context_from_json(child_assertion.get("context")),
+                    SpawnOptions {
+                        sticky_features: child_assertion
+                            .get("stickyFeatures")
+                            .and_then(|value| serde_json::from_value(value.clone()).ok())
+                            .or_else(|| Some(Default::default())),
+                        sticky_variables: child_assertion
+                            .get("stickyVariables")
+                            .and_then(|value| serde_json::from_value(value.clone()).ok())
+                            .or_else(|| Some(Default::default())),
+                    },
+                );
+                let child_options = OverrideOptions {
+                    default_variable_value: child_assertion
+                        .get("defaultVariableValue")
+                        .cloned()
+                        .map(crate::VariableValue::from_json),
+                    ..Default::default()
+                };
+                let child_evaluation =
+                    child.evaluate_global_variable(variable_key, None, Some(&child_options));
+                compare_global_variable_evaluation(
+                    &mut errors,
+                    variable_key,
+                    child_assertion,
+                    &child_evaluation,
+                    Some(child_index),
+                );
+                child.close();
             }
         }
-        if let Some(expected) = assertion
-            .get("expectedEvaluation")
-            .and_then(JsonValue::as_object)
-        {
-            let actual = serde_json::to_value(&evaluation).unwrap_or(JsonValue::Null);
-            compare_evaluation(&mut errors, variable_key, "variable", expected, &actual);
-        }
+        f.close();
         return Ok(errors);
     }
 
@@ -447,9 +510,7 @@ fn run_assertion(
         return Ok(vec!["test has no feature, segment, or variable".to_string()]);
     };
     let selected_key = datafile_key(environment, target);
-    let datafile = datafiles
-        .get(&selected_key)
-        .or_else(|| base_datafile(datafiles, environment));
+    let datafile = datafiles.get(&selected_key);
     let Some(datafile) = datafile else {
         return Err(format!(
             "No datafile available for feature assertion {feature_key}"
@@ -516,6 +577,7 @@ fn run_assertion(
     compare_variables(&mut errors, feature_key, assertion, &f);
     compare_evaluations(&mut errors, feature_key, assertion, &f);
     compare_children(&mut errors, feature_key, assertion, &f);
+    f.close();
     Ok(errors)
 }
 
@@ -573,18 +635,6 @@ fn project_segments(project: &Path) -> Result<HashMap<String, Segment>, String> 
         segments.insert(key.to_string(), segment);
     }
     Ok(segments)
-}
-
-fn base_datafile<'a>(
-    datafiles: &'a HashMap<String, crate::DatafileContent>,
-    environment: Option<&str>,
-) -> Option<&'a crate::DatafileContent> {
-    datafiles.get(&datafile_key(environment, None)).or_else(|| {
-        datafiles
-            .iter()
-            .find(|(key, _)| !key.contains("-target-"))
-            .map(|(_, value)| value)
-    })
 }
 
 pub fn run(options: TestOptions) -> Result<(), String> {

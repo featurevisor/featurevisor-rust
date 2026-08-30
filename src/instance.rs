@@ -856,12 +856,23 @@ impl Featurevisor {
         context: Option<&Context>,
         options: Option<&OverrideOptions>,
     ) -> Evaluation {
-        let sticky = self
+        let (sticky_features, sticky_variables) = self
             .inner
             .lock()
-            .map(|inner| inner.sticky_variables.clone())
+            .map(|inner| {
+                (
+                    inner.sticky_features.clone(),
+                    inner.sticky_variables.clone(),
+                )
+            })
             .unwrap_or_default();
-        self.evaluate_global_variable_with_sticky(variable_key, context, options, sticky)
+        self.evaluate_global_variable_with_sticky(
+            variable_key,
+            context,
+            options,
+            sticky_features,
+            sticky_variables,
+        )
     }
 
     pub(crate) fn evaluate_global_variable_with_sticky(
@@ -869,10 +880,17 @@ impl Featurevisor {
         variable_key: &str,
         context: Option<&Context>,
         options: Option<&OverrideOptions>,
-        sticky: StickyVariables,
+        sticky_features: StickyFeatures,
+        sticky_variables: StickyVariables,
     ) -> Evaluation {
         match catch_unwind(AssertUnwindSafe(|| {
-            self.evaluate_global_variable_inner(variable_key, context, options, sticky)
+            self.evaluate_global_variable_inner(
+                variable_key,
+                context,
+                options,
+                sticky_features,
+                sticky_variables,
+            )
         })) {
             Ok(evaluation) => evaluation,
             Err(error) => {
@@ -927,7 +945,8 @@ impl Featurevisor {
         variable_key: &str,
         context: Option<&Context>,
         options: Option<&OverrideOptions>,
-        sticky: StickyVariables,
+        sticky_features: StickyFeatures,
+        sticky_variables: StickyVariables,
     ) -> Evaluation {
         let (datafile, stored_context, _, _, _, modules, regex_cache) = self.snapshot();
         let mut resolved_context = stored_context;
@@ -963,7 +982,7 @@ impl Featurevisor {
             .clone()
             .unwrap_or_else(|| variable_key.to_string());
         let mut evaluation = self.empty_global_variable_evaluation(&resolved_key);
-        if let Some(value) = sticky.get(&resolved_key) {
+        if let Some(value) = sticky_variables.get(&resolved_key) {
             evaluation.reason = EvaluationReason::Sticky;
             evaluation.variable_value = Some(value.clone());
         } else if let Some(variable) = datafile.variables.get(&resolved_key) {
@@ -972,6 +991,7 @@ impl Featurevisor {
                 variable.required_features.as_deref(),
                 &evaluation_options.context,
                 options,
+                &sticky_features,
             );
             if !requirements_match {
                 evaluation.reason = EvaluationReason::RequiredFeaturesUnmet;
@@ -986,6 +1006,7 @@ impl Featurevisor {
                         item.required_features.as_deref(),
                         &evaluation_options.context,
                         options,
+                        &sticky_features,
                     ) {
                         continue;
                     }
@@ -1054,6 +1075,7 @@ impl Featurevisor {
         requirements: Option<&[crate::types::Required]>,
         context: &Context,
         options: Option<&OverrideOptions>,
+        sticky_features: &StickyFeatures,
     ) -> bool {
         requirements.unwrap_or_default().iter().all(|required| {
             let (key, enabled, variation) = match required {
@@ -1071,11 +1093,31 @@ impl Featurevisor {
                     (key.as_str(), true, Some(variation.as_str()))
                 }
             };
-            if self.is_enabled(key, Some(context)) != enabled {
+            let enabled_evaluation = self.evaluate_child(
+                EvaluationType::Flag,
+                key,
+                None,
+                Some(context),
+                options,
+                sticky_features.clone(),
+            );
+            if (enabled_evaluation.enabled == Some(true)) != enabled {
                 return false;
             }
             variation.map_or(true, |expected| {
-                self.get_variation(key, Some(context), options).as_deref() == Some(expected)
+                let evaluation = self.evaluate_child(
+                    EvaluationType::Variation,
+                    key,
+                    None,
+                    Some(context),
+                    options,
+                    sticky_features.clone(),
+                );
+                evaluation
+                    .variation_value
+                    .or_else(|| evaluation.variation.map(|value| value.value))
+                    .as_deref()
+                    == Some(expected)
             })
         })
     }
