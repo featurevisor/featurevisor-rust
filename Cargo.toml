@@ -1,6 +1,6 @@
 [package]
 name = "featurevisor"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 rust-version = "1.74.0"
 description = "Featurevisor SDK for Rust: feature flags, experiments, and remote configuration"
@@ -12,7 +12,11 @@ repository = "https://github.com/featurevisor/featurevisor-rust"
 authors = ["Fahad Heylaal"]
 keywords = ["feature-flags", "featurevisor", "experimentation", "ab-testing", "remote-config"]
 categories = ["config", "development-tools"]
-exclude = ["/.github", "/Makefile", "/monorepo", "/example-1", "/featurevisor"]
+exclude = ["/.github", "/Makefile", "/monorepo", "/example-1", "/featurevisor", "/openfeature"]
+
+[workspace]
+members = ["openfeature"]
+resolver = "2"
 
 [features]
 default = []

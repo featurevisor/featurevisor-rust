@@ -31,20 +31,66 @@ jobs:
       - name: Verify tag matches crate version
         shell: bash
         run: |
-          crate_version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          crate_version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "featurevisor"))')
+          provider_version=$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "featurevisor-openfeature"))')
           test "${GITHUB_REF_NAME#v}" = "$crate_version"
+          test "$crate_version" = "$provider_version"
       - name: Check
         run: |
           cargo fmt --all -- --check
-          cargo clippy --all-features --all-targets -- -D warnings
-          cargo test --all-features
+          cargo clippy --workspace --all-features --all-targets -- -D warnings
+          cargo test -p featurevisor --all-features
+          cargo test -p featurevisor-openfeature
+          cargo doc -p featurevisor-openfeature --no-deps
       - name: Run example project through Rust SDK
         run: cargo run --features cli --bin featurevisor -- test --projectDirectoryPath=./example-1 --onlyFailures
       - name: Verify package contents
         run: |
-          cargo package --all-features
-          cargo package --list --all-features
-      - name: Publish
-        run: cargo publish --all-features
+          cargo package -p featurevisor --all-features
+          cargo package -p featurevisor --list --all-features
+      - name: Publish base crate
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if curl --fail --silent --show-error --user-agent featurevisor-release-workflow "https://crates.io/api/v1/crates/featurevisor/$version" >/dev/null; then
+            echo "featurevisor $version is already published"
+          else
+            cargo publish -p featurevisor --all-features
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Wait for base crate
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          for attempt in {1..18}; do
+            if curl --fail --silent --show-error --user-agent featurevisor-release-workflow "https://crates.io/api/v1/crates/featurevisor/$version" >/dev/null; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "featurevisor $version did not become available on crates.io" >&2
+          exit 1
+      - name: Package and publish OpenFeature provider crate
+        shell: bash
+        run: |
+          # Cargo can only package a crate after exact registry dependencies
+          # exist. The base crate is therefore published and observed first.
+          packaged=false
+          for attempt in {1..18}; do
+            if cargo package -p featurevisor-openfeature; then
+              packaged=true
+              break
+            fi
+            sleep 10
+          done
+          test "$packaged" = true
+          cargo package -p featurevisor-openfeature --list
+          version="${GITHUB_REF_NAME#v}"
+          if curl --fail --silent --show-error --user-agent featurevisor-release-workflow "https://crates.io/api/v1/crates/featurevisor-openfeature/$version" >/dev/null; then
+            echo "featurevisor-openfeature $version is already published"
+          else
+            cargo publish -p featurevisor-openfeature
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

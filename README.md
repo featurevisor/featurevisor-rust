@@ -43,6 +43,7 @@ The SDK supports Featurevisor v3 projects and schema version 2 datafiles. The li
   - [Registering modules](#registering-modules)
 - [Child instance](#child-instance)
 - [Close](#close)
+- [OpenFeature](#openfeature)
 - [CLI usage](#cli-usage)
   - [Test](#test)
   - [Benchmark](#benchmark)
@@ -423,6 +424,98 @@ f.close();
 
 Close is idempotent. It closes modules, clears diagnostic subscriptions, clears event listeners, and makes later state changes no ops.
 
+## OpenFeature
+
+The OpenFeature provider is published as a separate crate. Applications that
+only use the Featurevisor SDK do not compile or link OpenFeature, Tokio, or the
+provider code.
+
+The official OpenFeature Rust SDK currently requires Rust 1.80.1 or newer. The
+base Featurevisor crate continues to support Rust 1.74 or newer.
+
+```toml
+[dependencies]
+featurevisor = "1.2"
+featurevisor-openfeature = "1.2"
+open-feature = "0.3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+Create a provider that owns its Featurevisor instance:
+
+```rust
+use featurevisor::{DatafileInput, FeaturevisorOptions};
+use featurevisor_openfeature::{FeaturevisorProvider, FeaturevisorProviderOptions};
+use open_feature::{EvaluationContext, OpenFeature};
+
+async fn configure(datafile: String) -> Result<(), Box<dyn std::error::Error>> {
+    let provider = FeaturevisorProvider::new(FeaturevisorProviderOptions {
+        featurevisor_options: FeaturevisorOptions {
+            datafile: Some(DatafileInput::Json(datafile)),
+            ..Default::default()
+        },
+        ..Default::default()
+    })?;
+
+    let mut api = OpenFeature::singleton_mut().await;
+    api.set_provider(provider).await;
+    let client = api.create_client();
+    drop(api);
+
+    let enabled = client
+        .get_bool_value(
+            "checkout",
+            Some(&EvaluationContext::default().with_targeting_key("user-123")),
+            None,
+        )
+        .await?;
+
+    println!("Checkout enabled: {enabled}");
+    Ok(())
+}
+```
+
+You can also pass an existing Featurevisor instance. The provider borrows it
+and does not close it:
+
+```rust
+use featurevisor_openfeature::FeaturevisorProvider;
+
+let provider = FeaturevisorProvider::from_featurevisor(f.clone())?;
+```
+
+OpenFeature uses one flag key while Featurevisor supports flags, variations,
+feature variables, and global variables:
+
+| OpenFeature key | Featurevisor evaluation |
+| --- | --- |
+| `checkout` | Flag for feature `checkout` |
+| `checkout:variation` | Variation for feature `checkout` |
+| `checkout:title` | Variable `title` inside feature `checkout` |
+| `variable:supportEmail` | Global variable `supportEmail` |
+
+`targeting_key_field`, `key_separator`, `variation_key`, and
+`global_variable_prefix` customize this mapping. The targeting key maps to
+`userId` by default. The global variable prefix defaults to `variable` and
+cannot contain the separator.
+
+The provider implements boolean, integer, float, string, and structure
+resolution. The OpenFeature Rust SDK represents top level object values with
+`StructValue`. Arrays can be nested in those objects, but its provider contract
+does not expose a separate top level array resolver.
+
+Featurevisor evaluation reasons, variation values, revision, schema version,
+rule keys, bucket information, and override information are mapped to
+OpenFeature resolution details and flag metadata. Missing definitions, type
+mismatches, invalid contexts, and invalid datafiles use standard OpenFeature
+errors. Replacing an invalid datafile with a valid one recovers the provider.
+
+The OpenFeature Rust SDK does not currently expose provider tracking or
+provider event callbacks. Featurevisor modules and diagnostics continue to
+work inside the Featurevisor instance.
+
+See the [OpenFeature provider guide](https://featurevisor.com/docs/sdks/openfeature/) for the shared key convention and providers for other languages.
+
 ## CLI usage
 
 The optional CLI delegates project discovery and datafile generation to the Node.js Featurevisor CLI, then evaluates through this Rust SDK. Install Rust and use the `cli` feature to build it:
@@ -468,16 +561,28 @@ The legacy `--with-scopes`, `--with-tags`, `--schemaVersion`, and `--schema-vers
 
 ## Development of this package
 
-Install Rust 1.74 or newer, then run:
+The base SDK supports Rust 1.74 or newer. The complete workspace requires Rust
+1.80.1 or newer because it includes the OpenFeature provider. With a current
+stable toolchain, run:
 
 ```bash
 make check
 make test-example-1
 ```
 
-The package uses `cargo fmt`, `cargo clippy`, and `cargo test`. `Cargo.lock` is committed so library and CLI dependency resolution stays reproducible.
+The package uses `cargo fmt`, `cargo clippy`, and `cargo test`. `Cargo.lock` is committed so library, CLI, and provider dependency resolution stays reproducible.
 
-To release, update the version in `Cargo.toml`, run the checks, merge the change, and tag the matching version. Publishing to crates.io is performed by `cargo publish` or the release workflow.
+The repository publishes two crates with the same version:
+
+- `featurevisor`
+- `featurevisor-openfeature`
+
+To release, update both versions, run the checks, merge the change, and tag the matching version. The release workflow publishes the base crate first and the provider second so the provider's exact Featurevisor dependency is available on crates.io.
+
+Cargo can only package the provider after that exact base crate version is
+visible on crates.io. Pull request checks therefore build, test, lint, and
+document the provider. The tagged release performs the final provider package
+inspection after publishing the base crate.
 
 ## License
 
