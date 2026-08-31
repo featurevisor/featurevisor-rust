@@ -28,14 +28,39 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - name: Build
-        run: cargo build --all-features
+        run: cargo build -p featurevisor --all-features
       - name: Test
-        run: cargo test --all-features
+        run: cargo test -p featurevisor --all-features
       - name: Format and lint
         if: matrix.rust == 'stable'
         run: |
           cargo fmt --all -- --check
-          cargo clippy --all-features --all-targets -- -D warnings
+          cargo clippy -p featurevisor --all-features --all-targets -- -D warnings
+
+  openfeature:
+    name: OpenFeature (Rust ${{ matrix.rust }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.80.1", stable]
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - name: Build and test provider
+        run: |
+          cargo build -p featurevisor-openfeature
+          cargo test -p featurevisor-openfeature
+      - name: Format, lint, and document
+        if: matrix.rust == 'stable'
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy -p featurevisor-openfeature --all-targets -- -D warnings
+          cargo doc -p featurevisor-openfeature --no-deps
 
   example:
     name: Featurevisor example 1

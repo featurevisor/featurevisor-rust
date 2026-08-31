@@ -1,0 +1,23 @@
+[package]
+name = "featurevisor-openfeature"
+version = "1.2.0"
+edition = "2021"
+rust-version = "1.80.1"
+description = "OpenFeature provider for the Featurevisor Rust SDK"
+license = "MIT"
+readme = "README.md"
+homepage = "https://featurevisor.com"
+documentation = "https://featurevisor.com/docs/sdks/rust/#openfeature"
+repository = "https://github.com/featurevisor/featurevisor-rust"
+authors = ["Fahad Heylaal"]
+keywords = ["feature-flags", "featurevisor", "openfeature", "experimentation"]
+categories = ["config", "development-tools"]
+
+[dependencies]
+featurevisor = { path = "..", version = "=1.2.0" }
+open-feature = { version = "0.3.0", features = ["serde_json"] }
+serde_json = "1"
+time = { version = "=0.3.36", features = ["formatting"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
